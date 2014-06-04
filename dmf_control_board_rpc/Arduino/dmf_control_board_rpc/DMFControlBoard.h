@@ -241,7 +241,7 @@ public:
   watchdog_t watchdog_;
 
   // private functions
-  uint8_t update_channel(const uint16_t channel, const uint8_t state);
+  uint8_t update_channel(const uint16_t channel, bool state);
   void update_all_channels();
   void send_spi(uint8_t pin, uint8_t address, uint8_t data);
   uint8_t set_pot(uint8_t index, uint8_t value);
@@ -250,61 +250,10 @@ public:
   void load_config(bool use_defaults=false);
   void save_config();
   version_t config_version();
-  int8_t set_waveform_voltage(const float output_vrms,
-                              const bool wait_for_reply=true);
-  float waveform_voltage() {
-#if ___HARDWARE_MAJOR_VERSION___ == 1
-    return waveform_voltage_;
-#else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
-    i2c_write(config_settings_.signal_generator_board_i2c_address,
-              CMD_GET_WAVEFORM_VOLTAGE);
-    delay(I2C_DELAY);
-    Wire.requestFrom(config_settings_.signal_generator_board_i2c_address,
-                     (uint8_t)1);
-    if (Wire.available()) {
-      uint8_t n_bytes_to_read = Wire.read();
-      if (n_bytes_to_read == sizeof(float) + 1) {
-        uint8_t data[5];
-        i2c_read(config_settings_.signal_generator_board_i2c_address,
-                 (uint8_t *)&data[0], 5);
-        return_code_ = data[4];
-        if (return_code_ == RETURN_OK) {
-          memcpy(&waveform_voltage_, &data[0], sizeof(float));
-          waveform_voltage_ *= amplifier_gain_;
-          return waveform_voltage_;
-        }
-      }
-    }
-    return RETURN_BAD_VALUE_S;
-#endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
-  }
-  int8_t set_waveform_frequency(float frequency);
-  float waveform_frequency() {
-#if ___HARDWARE_MAJOR_VERSION___ == 1
-    return waveform_frequency_;
-#else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
-    i2c_write(config_settings_.signal_generator_board_i2c_address,
-              CMD_GET_WAVEFORM_FREQUENCY);
-    delay(I2C_DELAY);
-    Wire.requestFrom(config_settings_.signal_generator_board_i2c_address,
-                     (uint8_t)1);
-    if (Wire.available()) {
-      uint8_t n_bytes_to_read = Wire.read();
-      if (n_bytes_to_read == sizeof(float) + 1) {
-        uint8_t data[5];
-        i2c_read(config_settings_.signal_generator_board_i2c_address,
-                 (uint8_t * )&data[0], 5);
-        return_code_ = data[4];
-        if (return_code_ == RETURN_OK) {
-          memcpy(&waveform_frequency_, &data[0], sizeof(float));
-          return waveform_frequency_;
-        }
-      }
-    }
-    return RETURN_BAD_VALUE_S;
-#endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
-  }
-
+  float set_waveform_voltage(const float output_vrms);
+  float waveform_voltage(uint8_t return_byte_index);
+  float set_waveform_frequency(float frequency);
+  float waveform_frequency(uint8_t return_byte_index);
 #if ___HARDWARE_MAJOR_VERSION___ == 1
   uint8_t waveform() const {
     return digitalRead(WAVEFORM_SELECT_);

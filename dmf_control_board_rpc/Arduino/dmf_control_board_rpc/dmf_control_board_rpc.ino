@@ -50,11 +50,8 @@ void setup() {
   dmf_control_board.begin();
 #ifndef DISABLE_I2C
 #ifdef __AVR_ATmega2560__
-  /* Join I2C bus as master. */
-  Wire.begin();
-#else
   /* Join I2C bus as slave. */
-  Wire.begin(0x10);
+  Wire.begin(0x12);
   Wire.onReceive(i2c_receive_event);
   Wire.onRequest(i2c_request_event);
 #endif  // #ifdef __AVR_ATmega328__

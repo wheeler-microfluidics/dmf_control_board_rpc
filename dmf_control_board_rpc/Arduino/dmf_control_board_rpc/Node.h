@@ -65,9 +65,6 @@ public:
   void send_spi(uint8_t pin, uint8_t address, uint8_t data) {
     board_.send_spi(pin, address, data);
   }
-  uint8_t set_pot(uint8_t index, uint8_t value) {
-    return board_.set_pot(index, value);
-  }
   int8_t set_series_resistor_index(uint8_t index, uint8_t channel) {
     return board_.set_series_resistor(channel, index);
   }
@@ -88,16 +85,6 @@ public:
   void load_config(bool use_defaults=false);
   void save_config();
 #endif
-  float waveform_voltage() const { return board_.waveform_voltage(); }
-  int8_t set_waveform_voltage(float output_vrms, bool wait_for_reply=true) {
-    return board_.set_waveform_voltage(output_vrms, wait_for_reply);
-  }
-
-  float waveform_frequency() const { return board_.waveform_frequency(); }
-  int8_t set_waveform_frequency(float frequency) {
-    return board_.set_waveform_frequency(frequency);
-  }
-
   uint8_t set_adc_prescaler(const uint8_t index) {
     return board_.set_adc_prescaler(index);
   }
@@ -125,12 +112,17 @@ public:
     return false;
   }
 
-#if ___HARDWARE_MAJOR_VERSION___ == 1
-  uint8_t waveform() const { return board_.waveform(); }
-  int8_t set_waveform(uint16_t waveform_type) {
-    board_.set_waveform(waveform_type);
+  float signal_waveform_voltage(uint8_t return_byte_index) { return board_.waveform_voltage(return_byte_index); }
+
+  float set_signal_waveform_voltage(float vrms) {
+    return board_.set_waveform_voltage(vrms);
   }
-#endif  //#if ___HARDWARE_MAJOR_VERSION___ == 1
+
+  float signal_waveform_frequency(uint8_t return_byte_index) { return board_.waveform_frequency(return_byte_index); }
+
+  float set_signal_waveform_frequency(float frequency) {
+    return board_.set_waveform_frequency(frequency);
+  }
 
 #ifdef AVR // only on Arduino Mega 2560
   float sampling_rate() const {

@@ -30,6 +30,11 @@ along with dmf_control_board.  If not, see <http://www.gnu.org/licenses/>.
   extern DueFlashStorage EEPROM;
 #endif
 #include <math.h>
+#include "signal_generator_board.rpc.h"
+#include "NodeCommandProcessor.h"
+#include "UnionMessage.h"
+#include "commands.pb.h"
+#include "remote_i2c_command.h"
 
 #ifdef AVR // only on Arduino Mega 2560
   const float DMFControlBoard::SAMPLING_RATES_[] = { 8908, 16611, 29253, 47458,
@@ -207,7 +212,7 @@ float DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
           set_waveform_voltage(waveform_voltage_ + V_fb);
 #else   // #if ___HARDWARE_MAJOR_VERSION___ == 1
           // Update output voltage (but don't wait for i2c response).
-          set_waveform_voltage(waveform_voltage_, false);
+          set_waveform_voltage(waveform_voltage_);
 #endif // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
         }
       }
@@ -461,18 +466,20 @@ void DMFControlBoard::send_spi(uint8_t pin, uint8_t address, uint8_t data) {
   digitalWrite(pin, HIGH);
 }
 
+#if ___HARDWARE_MAJOR_VERSION___ == 1
 uint8_t DMFControlBoard::set_pot(uint8_t index, uint8_t value) {
-  if (index>=0 && index<4) {
-    send_spi(AD5204_SLAVE_SELECT_PIN_, index, 255-value);
+  if (index >= 0 && index < 4) {
+    send_spi(AD5204_SLAVE_SELECT_PIN_, index, 255 - value);
     return RETURN_OK;
   }
   return RETURN_BAD_INDEX;
 }
+#endif
 
 #ifdef AVR // only on Arduino Mega 2560
 uint8_t DMFControlBoard::set_adc_prescaler(const uint8_t index) {
   uint8_t return_code = RETURN_OK;
-  switch(128>>index) {
+  switch(128 >> index) {
     case 128:
       ADCSRA |= _BV(ADPS2) | _BV(ADPS1) | _BV(ADPS0);
       break;
@@ -510,8 +517,8 @@ uint8_t DMFControlBoard::set_adc_prescaler(const uint8_t index) {
   return return_code;
 }
 #endif
-uint8_t DMFControlBoard::set_series_resistor(const uint8_t channel,
-                                             const uint8_t index) {
+
+uint8_t DMFControlBoard::set_series_resistor(uint8_t channel, uint8_t index) {
   uint8_t return_code = RETURN_OK;
   if (channel==0) {
     switch(index) {
@@ -606,7 +613,7 @@ void DMFControlBoard::update_all_channels() {
   // first PCA9505 chip stores the state of channels 0-7, the second register
   // represents channels 8-15, etc.).
   uint8_t data[2];
-  for (uint8_t chip=0; chip<number_of_channels_/40; chip++) {
+  for (uint8_t chip = 0; chip < number_of_channels_ / 40; chip++) {
     for (uint8_t port = 0; port < 5; port++) {
       data[0] = PCA9505_OUTPUT_PORT_REGISTER_ + port;
       data[1] = 0;
@@ -623,8 +630,7 @@ void DMFControlBoard::update_all_channels() {
 // Note: Do not use this function in a loop to update all channels. If you
 //       want to update all channels, use the update_all_channels function
 //       instead because it will be 8x more efficient.
-uint8_t DMFControlBoard::update_channel(const uint16_t channel,
-                                        const uint8_t state) {
+uint8_t DMFControlBoard::update_channel(const uint16_t channel, bool state) {
   uint8_t chip = channel / 40;
   uint8_t port = (channel % 40) / 8;
   uint8_t bit = (channel % 40) % 8;
@@ -638,7 +644,7 @@ uint8_t DMFControlBoard::update_channel(const uint16_t channel,
     uint8_t data[2];
     data[0] = PCA9505_OUTPUT_PORT_REGISTER_ + port;
     data[1] = Wire.read();
-    bitWrite(data[1], bit, state == 0);
+    bitWrite(data[1], bit, state);
     i2c_write(config_settings_.switching_board_i2c_address + chip,
               data, 2);
     return RETURN_OK;
@@ -758,9 +764,45 @@ void DMFControlBoard::save_config() {
   load_config();
 }
 
-int8_t DMFControlBoard::set_waveform_voltage(const float output_vrms,
-                                             const bool wait_for_reply) {
+
+float DMFControlBoard::waveform_voltage(uint8_t return_byte_index) {
+#if ___HARDWARE_MAJOR_VERSION___ == 1
+    return waveform_voltage_;
+#else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
+  /* # Off-board waveform signal generator #
+   *
+   * For hardware with major version greater than 1, the waveform generation is
+   * delegated to a separate signal-generator board.  Therefore, here we encode
+   * a request to send to the signal-generator board over off-chip I2C to set
+   * the waveform voltage to the specified value. */
+
+  union {
+    SignalGeneratorWaveformVoltageRequest request;
+    SignalGeneratorWaveformVoltageResponse response;
+  } message;
+
+  uint8_t data[10];
+
   int8_t return_code;
+
+  /* Send request to signal-generator board to set waveform frequency. */
+  return_code = remote_i2c_command(
+      config_settings_.signal_generator_board_i2c_address, message.request,
+      message.response, SignalGeneratorCommandRequest_fields,
+      SignalGeneratorWaveformVoltageRequest_fields,
+      SignalGeneratorWaveformVoltageResponse_fields, &data[0],
+      sizeof(data));
+
+  if (return_byte_index < return_code) {
+    return data[return_byte_index]; //message.response.result;
+  } else {
+    return message.response.result;
+  }
+#endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
+}
+
+
+float DMFControlBoard::set_waveform_voltage(const float output_vrms) {
 #if ___HARDWARE_MAJOR_VERSION___==1
   float step = output_vrms / amplifier_gain_ * 2 * sqrt(2) / 4 * 255;
   if (output_vrms < 0 || step > 255) {
@@ -771,41 +813,91 @@ int8_t DMFControlBoard::set_waveform_voltage(const float output_vrms,
     return RETURN_OK;
   }
 #else  // #if ___HARDWARE_MAJOR_VERSION___==1
+  /* # Off-board waveform signal generator #
+   *
+   * For hardware with major version greater than 1, the waveform generation is
+   * delegated to a separate signal-generator board.  Therefore, here we encode
+   * a request to send to the signal-generator board over off-chip I2C to set
+   * the waveform voltage to the specified value. */
+
+  union {
+    SignalGeneratorSetWaveformVoltageRequest request;
+    SignalGeneratorSetWaveformVoltageResponse response;
+  } message;
+
+  uint8_t data[10];
+
   float vrms = output_vrms / amplifier_gain_;
-  uint8_t data[5];
-  data[0] = CMD_SET_WAVEFORM_VOLTAGE;
-  memcpy(&data[1], &vrms, sizeof(float));
-  i2c_write(config_settings_.signal_generator_board_i2c_address,
-            data, 5);
-  if (wait_for_reply) {
-    delay(I2C_DELAY);
-    Wire.requestFrom(config_settings_.signal_generator_board_i2c_address,
-                     (uint8_t)1);
-    if (Wire.available()) {
-      uint8_t n_bytes_to_read = Wire.read();
-      if (n_bytes_to_read==1) {
-        uint8_t n_bytes_read = 0;
-        n_bytes_read += i2c_read(
-          config_settings_.signal_generator_board_i2c_address,
-          (uint8_t*)&return_code,
-          sizeof(return_code));
-        if (return_code == RETURN_OK) {
-          waveform_voltage_ = output_vrms;
-        }
-      }
-    }
-    return return_code;
-  } else {
-    waveform_voltage_ = output_vrms;
-    return RETURN_OK;
-  }
+  message.request.vrms = vrms ;
+
+  int8_t return_code;
+
+  /* Send request to signal-generator board to set waveform frequency. */
+  return_code = remote_i2c_command(
+      config_settings_.signal_generator_board_i2c_address, message.request,
+      message.response, &SignalGeneratorCommandRequest_fields[0],
+      &SignalGeneratorSetWaveformVoltageRequest_fields[0],
+      &SignalGeneratorSetWaveformVoltageResponse_fields[0], &data[0],
+      sizeof(data));
+
+  waveform_voltage_ = output_vrms;
+
+  return message.response.result * amplifier_gain_;
 #endif  // #if ___HARDWARE_MAJOR_VERSION___==1 / #else
 }
 
 
-int8_t DMFControlBoard::set_waveform_frequency(float frequency) {
+float DMFControlBoard::waveform_frequency(uint8_t return_byte_index) {
+#if ___HARDWARE_MAJOR_VERSION___ == 1
+  return waveform_frequency_;
+#else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
+  /* # Off-board waveform signal generator #
+   *
+   * For hardware with major version greater than 1, the waveform generation is
+   * delegated to a separate signal-generator board.  Therefore, here we encode
+   * a request to send to the signal-generator board over off-chip I2C to get
+   * the current waveform frequency value. */
+
+  union {
+    SignalGeneratorWaveformFrequencyRequest request;
+    SignalGeneratorWaveformFrequencyResponse response;
+  } message;
+
+  memset(&message, 0, ((sizeof(message.request) > sizeof(message.response))
+                       ? sizeof(message.request) : sizeof(message.response)));
+
+  uint8_t data[10];
+
+  int8_t return_code;
+
+  /* Send request to signal-generator board to set waveform frequency. */
+  return_code = remote_i2c_command(
+      config_settings_.signal_generator_board_i2c_address, message.request,
+      message.response, SignalGeneratorCommandRequest_fields,
+      SignalGeneratorWaveformFrequencyRequest_fields,
+      SignalGeneratorWaveformFrequencyResponse_fields, &data[0],
+      sizeof(data));
+
+  if (return_byte_index < return_code) {
+    return data[return_byte_index]; //message.response.result;
+  } else {
+    return message.response.result;
+  }
+
+  return data[return_byte_index]; //message.response.result;
+#endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
+}
+
+
+float DMFControlBoard::set_waveform_frequency(float frequency) {
   waveform_frequency_ = frequency;
 #if ___HARDWARE_MAJOR_VERSION___ == 1
+  /* # On-board waveform generator #
+   *
+   * For major version 1 of the hardware, the waveform generator is on-board.
+   * Therefore, here we use on-board I2C to set the oscillator chip to the
+   * specified frequency. */
+
   /* The frequency of the `LTC6904` oscillator needs to be set to 50x
    * the fundamental frequency. */
   float freq = waveform_frequency_ * 50;
@@ -827,26 +919,36 @@ int8_t DMFControlBoard::set_waveform_frequency(float frequency) {
     return RETURN_OK;
   }
 #else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
-  uint8_t data[5];
-  data[0] = CMD_SET_WAVEFORM_FREQUENCY;
-  memcpy(&data[1], &waveform_frequency_, sizeof(float));
-  i2c_write(config_settings_.signal_generator_board_i2c_address,
-            data, 5);
-  delay(I2C_DELAY);
-  Wire.requestFrom(config_settings_.signal_generator_board_i2c_address,
-                   (uint8_t)1);
-  if (Wire.available()) {
-    uint8_t n_bytes_to_read = Wire.read();
-    if (n_bytes_to_read == 1) {
-      uint8_t n_bytes_read = 0;
-      n_bytes_read += i2c_read(
-        config_settings_.signal_generator_board_i2c_address,
-        (uint8_t * )&return_code_,
-        sizeof(return_code_));
-      return return_code_;
-    }
-  }
-  return RETURN_BAD_VALUE_S;
+  /* # Off-board waveform signal generator #
+   *
+   * For hardware with major version greater than 1, the waveform generation is
+   * delegated to a separate signal-generator board.  Therefore, here we encode
+   * a request to send to the signal-generator board over off-chip I2C to set
+   * the waveform frequency to the specified value. */
+
+  union {
+    SignalGeneratorSetWaveformFrequencyRequest request;
+    SignalGeneratorSetWaveformFrequencyResponse response;
+  } message;
+
+  memset(&message, 0, ((sizeof(message.request) > sizeof(message.response))
+                       ? sizeof(message.request) : sizeof(message.response)));
+
+  uint8_t data[10];
+
+  message.request.frequency = waveform_frequency_;
+
+  int8_t return_code;
+
+  /* Send request to signal-generator board to set waveform frequency. */
+  return_code = remote_i2c_command(
+      config_settings_.signal_generator_board_i2c_address, message.request,
+      message.response, &SignalGeneratorCommandRequest_fields[0],
+      &SignalGeneratorSetWaveformFrequencyRequest_fields[0],
+      &SignalGeneratorSetWaveformFrequencyResponse_fields[0], &data[0],
+      sizeof(data));
+
+  return message.response.result;
 #endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
 }
 
