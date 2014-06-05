@@ -39,6 +39,44 @@ public:
    * METHODS
    **************************************************************/
 
+  float read_sample_voltage(uint8_t analog_input_key,
+                            uint16_t index) const {
+    /* # `read_sample_voltage` #
+     *
+     *  - `analog_input_key`:
+     *   - `1`: High-voltage.
+     *   - `2`: Feedback voltage. */
+    if (index >= board_.MAX_SAMPLE_COUNT) {
+      return -1;
+    }
+    switch (analog_input_key) {
+      case 1:
+        return board_.high_voltage_samples[index];
+      case 2:
+      default:
+        return board_.feedback_voltage_samples[index];
+    }
+  }
+
+  int8_t read_sample_resistor_index(uint8_t analog_input_key,
+                                    uint16_t index) const {
+    /* # `read_sample_resistor_index` #
+     *
+     *  - `analog_input_key`:
+     *   - `1`: High-voltage.
+     *   - `2`: Feedback voltage. */
+    if (index >= board_.MAX_SAMPLE_COUNT) {
+      return -2;
+    }
+    switch (analog_input_key) {
+      case 1:
+        return board_.high_voltage_resistor_indexes[index];
+      case 2:
+      default:
+        return board_.feedback_voltage_resistor_indexes[index];
+    }
+  }
+
   uint8_t update_channel(const uint16_t channel, const uint8_t state) {
     return board_.update_channel(channel, state);
   }
@@ -159,10 +197,10 @@ public:
     board_.set_auto_adjust_amplifier_gain(value);
   }
 
-  float measure_impedance(uint16_t sampling_time_ms, uint16_t n_samples,
-                          uint16_t delay_between_samples_ms) {
-    board_.measure_impedance(sampling_time_ms, n_samples,
-                             delay_between_samples_ms);
+  uint16_t measure_impedance(uint16_t sampling_time_ms, uint16_t n_samples,
+                             uint16_t delay_between_samples_ms) {
+    return board_.measure_impedance(sampling_time_ms, n_samples,
+                                    delay_between_samples_ms);
   }
 
   void reset_config_to_defaults() { board_.load_config(true); }

@@ -61,19 +61,159 @@ const char DMFControlBoard::SOFTWARE_VERSION_[] = ___SOFTWARE_VERSION___;
 const char DMFControlBoard::URL_[] =
     "http://microfluidics.utoronto.ca/dmf_control_board";
 
-DMFControlBoard::DMFControlBoard() : RemoteObject(true) {}
+DMFControlBoard::DMFControlBoard() : RemoteObject(true) {
+  /* Initialize sample values to allow for testing the following methods:
+   *
+   *  - `Node::read_sample_voltage`
+   *  - `Node::read_sample_resistor_index` */
+  for (int i = 0; i < MAX_SAMPLE_COUNT; i++) {
+    high_voltage_samples[i] = i * 10;
+    high_voltage_resistor_indexes[i] = i;
+    feedback_voltage_samples[i] = (i + 1) * 10;
+    feedback_voltage_resistor_indexes[i] = (i + 1);
+  }
+}
 
 DMFControlBoard::~DMFControlBoard() {}
 
-float DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
-                                         uint16_t n_samples,
-                                         uint16_t delay_between_samples_ms) {
-  /* Only collect enough samples to fill the maximum payload length. */
-  uint16_t max_samples = MAX_PAYLOAD_LENGTH /
-                         (2 * sizeof(int8_t) + 2 * sizeof(int16_t));
-  if (n_samples > max_samples) {
-    n_samples = max_samples;
+void DMFControlBoard::measure(PeakToPeakMeasurement &measurement) {
+  uint16_t voltage_reading = analogRead(measurement.analog_pin_index_);
+
+  if (measurement.update(voltage_reading)) {
+    /* We need to update the series resistor. */
+    set_series_resistor(measurement.analog_pin_index_,
+                        measurement.resistor_index_);
   }
+}
+
+
+void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
+                                            &fb_measurement,
+                                            PeakToPeakMeasurement
+                                            &hv_measurement) {
+  /* Adjust amplifier gain (only if the hv resistor is the same as on the
+   * previous reading; otherwise it may not have had enough time to get a good
+   * reading). */
+  if (auto_adjust_amplifier_gain_ && waveform_voltage_ > 0
+      && hv_measurement.resistor_index_ == A0_series_resistor_index_) {
+    float R = (config_settings_.A0_series_resistance
+                [hv_measurement.resistor_index_]);
+    float C = (config_settings_.A0_series_capacitance
+                [hv_measurement.resistor_index_]);
+    float measured_voltage, set_voltage;
+    int16_t hv_pk_pk = hv_measurement.peak_to_peak();
+#if ___HARDWARE_MAJOR_VERSION___ == 1
+    float V_fb;
+    int16_t fb_pk_pk = fb_measurement.peak_to_peak();
+
+    if (fb_measurement.saturated_ || fb_pk_pk < 0) {
+      V_fb = 0;
+    } else {
+      V_fb = fb_pk_pk * 5.0 / 1023 / sqrt(2) / 2;
+    }
+    measured_voltage = (hv_pk_pk * 5.0 / 1023.0 // measured Vrms /
+                        / sqrt(2) / 2) /
+                        (1 / sqrt(pow(10e6 / R   // transfer
+                                      + 1, 2)    // function
+                                  + pow(10e6 * C * 2 * M_PI *
+                                        waveform_frequency_, 2)));
+    set_voltage = waveform_voltage_ + V_fb;
+#else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
+    measured_voltage = (hv_pk_pk * 5.0 / 1023.0  // measured Vrms /
+                        / sqrt(2) / 2) /
+                        (1 / sqrt(pow(10e6 / R,   // transfer
+                                      2) +        // function
+                                  pow(10e6 * C * 2 * M_PI *
+                                      waveform_frequency_, 2)));
+    set_voltage = waveform_voltage_;
+#endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
+    // If we're outside of the voltage tolerance, update the gain.
+    if (abs(measured_voltage - set_voltage) >
+        config_settings_.voltage_tolerance) {
+      amplifier_gain_ *= measured_voltage / set_voltage;
+
+      /* Enforce minimum gain of 1 because if gain goes to zero, it cannot
+        * be adjusted further. */
+      if (amplifier_gain_ < 1) {
+        amplifier_gain_ = 1;
+      }
+      float target;
+      float error = 1e6;
+
+      /* Update output voltage (accounting for amplifier gain and for the
+       * voltage drop across the feedback resistor). */
+#if ___HARDWARE_MAJOR_VERSION___ == 1
+      target = waveform_voltage_ + V_fb;
+#else   // #if ___HARDWARE_MAJOR_VERSION___ == 1
+      target = waveform_voltage_;
+#endif // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
+      /* Subtract small value to work-around Protocol Buffer serialization issue.
+       *
+       * The symptom of the serialization issue presents as certain floating
+       * point values being incorrectly encoded as near-zero.  Subtracting a
+       * small fraction seems to correct the issue in the general case.
+       *
+       * TODO: Remove subtraction of small amount once Protocol Buffer
+       * serialization has been fixed. */
+      while (error > config_settings_.voltage_tolerance) {
+        error = abs(set_waveform_voltage(target) - target);
+        target -= 0.001;
+
+        /* There is a new request available on the serial port.  Stop what we're
+         * doing so we can service the new request. */
+        if (Serial.available() > 0) { break; }
+      }
+    }
+  }
+}
+
+
+uint16_t DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
+                                            uint16_t n_samples,
+                                            uint16_t
+                                            delay_between_samples_ms) {
+  /* # `measure_impedance` #
+   *
+   * ## Pins ##
+   *
+   *  - Analog pin `0` is connected to _high-voltage (HV)_ signal.
+   *  - Analog pin `1` is connected to _feed-back (FB)_ signal.
+   *
+   * ## Analog input measurement circuit ##
+   *
+   *
+   *                     $R_fixed$
+   *     $V_in$   |-------/\/\/\------------\--------\--------\--------\
+   *                                        |        |        |        |
+   *                                        /        /        /        /
+   *                              $R_min$   \  $R_1$ \  $R_2$ \  $R_3$ \
+   *                                        /        /        /        /
+   *                                        \        \        \        \
+   *                                        |        |        |        |
+   *                                        o        o        o        o
+   *                                       /        /        /        /
+   *                                      /        /        /        /
+   *                                        o        o        o        o
+   *                                        |        |        |        |
+   *                                        |        |        |        |
+   *                                       ---      ---      ---      ---
+   *                                        -        -        -        -
+   *
+   * Based on the amplitude of $V_in$, we need to select an appropriate
+   * resistor to activate, such that we divide the input voltage to within
+   * 0-5V, since this is the range that Arduino ADC can handle.
+   */
+
+  /* Only collect enough samples to fill the maximum payload length.
+   *
+   * Each sample contains:
+   *
+   *  - High-voltage (`A0`) amplitude.
+   *  - High-voltage (`A0`) resistor index.
+   *  - Feed-back (`A1`) amplitude.
+   *  - Feed-back (`A1`) resistor index.
+   * */
+  if (n_samples > MAX_SAMPLE_COUNT) { n_samples = MAX_SAMPLE_COUNT; }
 
   /* Save current resistor indexes to return them to their original state when
    * we're done. */
@@ -81,170 +221,75 @@ float DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
   uint8_t original_A1_index = A1_series_resistor_index_;
 
   /* Set the resistors to their highest values */
-  set_series_resistor(0, sizeof(config_settings_.A0_series_resistance) /
-                    sizeof(float) - 1);
-  set_series_resistor(1, sizeof(config_settings_.A1_series_resistance) /
-                    sizeof(float) - 1);
+  set_series_resistor(0, config_settings_.A0_series_resistor_count() - 1);
+  set_series_resistor(1, config_settings_.A1_series_resistor_count() - 1);
 
-  /* Sample the feedback voltage. */
-  for (uint16_t i = 0; i < n_samples; i++) {
-    uint16_t hv_max = 0;
-    uint16_t hv_min = 1023;
-    uint16_t hv = 0;
-    int16_t hv_pk_pk;
-    int8_t hv_resistor = A0_series_resistor_index_;
-    uint16_t fb_max = 0;
-    uint16_t fb_min = 1023;
-    uint16_t fb = 0;
-    int16_t fb_pk_pk;
-    int8_t fb_resistor = A1_series_resistor_index_;
+  /* Sample the following voltage signals:
+   *
+   *  - Incoming high-voltage signal from the amplifier.
+   *  - Incoming feed-back signal from the DMF device.
+   *
+   * For each signal, take `n` samples to find the corresponding peak-to-peak
+   * voltage.  While sampling, automatically select the largest feed-back
+   * resistor that _does not saturate_ the input _analog-to-digital converter
+   * (ADC)_.  This provides the highest resolution measurements.
+   *
+   * __NB__ In the case where the signal saturates the lowest resistor, mark
+   * the measurement as saturated/invalid. */
+  uint16_t i = 0;
+
+  for (; i < n_samples; i++) {
+    PeakToPeakMeasurement hv_measurement(0, A0_series_resistor_index_);
+    PeakToPeakMeasurement fb_measurement(1, A1_series_resistor_index_);
     uint32_t t_sample = millis();
 
+    /* Sample for `sampling_time_ms` milliseconds and use the minimum and
+     * maximum values to determine peak-to-peak voltage. */
     while (millis() - t_sample < sampling_time_ms) {
-      // `hv_resistor == -1` if the smallest series resistor becomes saturated.
-      if (hv_resistor != -1) {
-        hv = analogRead(0);
-        // If the ADC is saturated, use a smaller resistor and reset the peak.
-        if (hv > 820) {
-          if (A0_series_resistor_index_ > 0) {
-            set_series_resistor(0, A0_series_resistor_index_ - 1);
-            hv_max = 0;
-            hv_min = 1023;
-          } else {
-            hv_resistor = -1;
-          }
-          continue;
-        }
-        if (hv > hv_max) {
-          hv_max = hv;
-        }
-        if (hv < hv_min) {
-          hv_min = hv;
-        }
-      }
-
-      // `hv_resistor == -1` if the smallest series resistor becomes saturated.
-      if (fb_resistor != -1) {
-        fb = analogRead(1);
-
-        // If the ADC is saturated, use a smaller resistor and reset the peak.
-        if (fb > 820) {
-          if (A1_series_resistor_index_ > 0) {
-            set_series_resistor(1, A1_series_resistor_index_ - 1);
-            fb_max = 0;
-            fb_min = 1023;
-          } else {
-            fb_resistor = -1;
-          }
-          continue;
-        }
-        if (fb > fb_max) {
-          fb_max = fb;
-        }
-        if (fb < fb_min) {
-          fb_min = fb;
-        }
-      }
+      /* If the smallest series resistor becomes saturated, do not perform
+       * measurement. */
+      if (!hv_measurement.saturated_) { measure(hv_measurement); }
+      if (!fb_measurement.saturated_) { measure(fb_measurement); }
     }
 
-    hv_pk_pk = hv_max - hv_min;
-    fb_pk_pk = fb_max - fb_min;
+    int16_t hv_pk_pk = hv_measurement.peak_to_peak();
+    int16_t fb_pk_pk = fb_measurement.peak_to_peak();
 
-    /* If we didn't get a valid feedback sample during the sampling
-     * time, return -1 as the index. */
-    if (fb_max == 0 || (fb_min == 1023 && fb_resistor != -1)) {
-      fb_resistor = -1;
-    } else {
-      fb_resistor = A1_series_resistor_index_;
+    /* TODO: Rather than check `i > 0`, should this check that at least one
+     * valid measurement has been made? */
+    if (hv_measurement.valid() && i > 0) {
+      /* Based on the most-recent peak-to-peak measurement of the incoming
+       * high-voltage signal, adjust the gain correction factor we apply to
+       * waveform amplitude changes to compensate for deviations from our model
+       * of the gain of the amplifier. */
+      update_amplifier_gain(hv_measurement, fb_measurement);
     }
 
-    /* If we didn't get a valid high voltage sample during the sampling time,
-     * return -1 as the index. */
-    if (hv_max == 0 || (hv_min == 1023 && hv_resistor != -1)) {
-      hv_resistor = -1;
-    } else {
-      /* Adjust amplifier gain (only if the hv resistor is the same as on the
-       * previous reading; otherwise it may not have had enough time to get a
-       * good reading). */
-      if (auto_adjust_amplifier_gain_ && waveform_voltage_ > 0 && i > 0
-          && hv_resistor == A0_series_resistor_index_) {
-        float R = config_settings_.A0_series_resistance
-                                   [A0_series_resistor_index_];
-        float C = config_settings_.A0_series_capacitance
-                                   [A0_series_resistor_index_];
-        float measured_voltage, set_voltage;
-#if ___HARDWARE_MAJOR_VERSION___ == 1
-        float V_fb;
-        if (fb_resistor == - 1 || fb_pk_pk < 0) {
-          V_fb = 0;
-        } else {
-          V_fb = fb_pk_pk * 5.0 / 1023 / sqrt(2) / 2;
-        }
-        measured_voltage = (hv_pk_pk * 5.0 / 1023.0 // measured Vrms /
-                            / sqrt(2) / 2) /
-                           (1 / sqrt(pow(10e6 / R   // transfer
-                                         + 1, 2)    // function
-                                     + pow(10e6 * C * 2 * M_PI *
-                                           waveform_frequency_, 2)));
-        set_voltage = waveform_voltage_ + V_fb;
-#else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
-        measured_voltage = (hv_pk_pk * 5.0 / 1023.0  // measured Vrms /
-                            / sqrt(2) / 2) /
-                           (1 / sqrt(pow(10e6 / R,   // transfer
-                                         2) +        // function
-                                     pow(10e6 * C * 2 * M_PI *
-                                         waveform_frequency_, 2)));
-        set_voltage = waveform_voltage_;
-#endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
-        // If we're outside of the voltage tolerance, update the gain.
-        if (abs(measured_voltage - set_voltage) >
-            config_settings_.voltage_tolerance) {
-          amplifier_gain_ *= measured_voltage / set_voltage;
+    /* Store measurements into result buffers. */
+    //high_voltage_samples[i] = hv_pk_pk;
+    high_voltage_samples[i] = hv_measurement.mean();
+    high_voltage_resistor_indexes[i] = hv_measurement.resistor_index_;
+    //feedback_voltage_samples[i] = fb_pk_pk;
+    feedback_voltage_samples[i] = fb_measurement.mean();
+    feedback_voltage_resistor_indexes[i] = fb_measurement.resistor_index_;
 
-          /* Enforce minimum gain of 1 because if gain goes to zero, it cannot
-           * be adjusted further. */
-          if (amplifier_gain_ < 1) {
-            amplifier_gain_ = 1;
-          }
-#if ___HARDWARE_MAJOR_VERSION___ == 1
-          /* Update output voltage (accounting for amplifier gain and for the
-           * voltage drop across the feedback resistor). */
-          set_waveform_voltage(waveform_voltage_ + V_fb);
-#else   // #if ___HARDWARE_MAJOR_VERSION___ == 1
-          // Update output voltage (but don't wait for i2c response).
-          set_waveform_voltage(waveform_voltage_);
-#endif // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
-        }
-      }
-      hv_resistor = A0_series_resistor_index_;
-    }
-
-    /* TODO: Write sampled values to a return value, rather than writing to a
-     * generic payload array. */
-    serialize(&hv_pk_pk, sizeof(hv_pk_pk));
-    serialize(&hv_resistor, sizeof(hv_resistor));
-    serialize(&fb_pk_pk, sizeof(fb_pk_pk));
-    serialize(&fb_resistor, sizeof(fb_resistor));
-
-    if (Serial.available() > 0) {
-      return 0;
-    }
+    /* There is a new request available on the serial port.  Stop what we're
+     * doing so we can service the new request. */
+    if (Serial.available() > 0) { break; }
 
     uint32_t t_delay = millis();
     while (millis() - t_delay < delay_between_samples_ms) {}
   }
 
-  // set the resistors back to their original states
+  /* Set the resistors back to their original states. */
   set_series_resistor(0, original_A0_index);
   set_series_resistor(1, original_A1_index);
+
+  /* Return the number of samples that we measured _(i.e, the number of values
+   * available in the result buffers)_. */
+  return i;
 }
 
-
-///////////////////////////////////////////////////////////////////////////////
-//
-// These functions are only defined on the Arduino.
-//
-///////////////////////////////////////////////////////////////////////////////
 
 void DMFControlBoard::begin() {
   RemoteObject::begin();
@@ -280,12 +325,6 @@ void DMFControlBoard::begin() {
     delay(500);
   #endif
 
-  Serial.print(name());
-  Serial.print(" v");
-  Serial.println(hardware_version());
-  Serial.print("Firmware version: ");
-  Serial.println(software_version());
-
   i2c_scan();
 
   #if ___HARDWARE_MAJOR_VERSION___ == 1
@@ -297,148 +336,61 @@ void DMFControlBoard::begin() {
   amplifier_gain_ = 100;
 
   load_config();
-  Serial.print("Configuration version=");
-  Serial.print(config_settings_.version.major, DEC);
-  Serial.print(".");
-  Serial.print(config_settings_.version.minor, DEC);
-  Serial.print(".");
-  Serial.println(config_settings_.version.micro, DEC);
-
-  // Versions > 1.2 use the built in 5V AREF
-  #if ___HARDWARE_MAJOR_VERSION___ == 1 && ___HARDWARE_MINOR_VERSION___ < 3
-    Serial.print("aref=");
-    Serial.println(config_settings_.aref, DEC);
-  #endif
-
-  #if ___HARDWARE_MAJOR_VERSION___ == 1
-    Serial.print("waveout_gain_1=");
-    Serial.println(config_settings_.waveout_gain_1, DEC);
-    Serial.print("vgnd=");
-    Serial.println(config_settings_.vgnd, DEC);
-    Serial.print("A0_series_resistance[0]=");
-    Serial.println(config_settings_.A0_series_resistance[0]);
-    Serial.print("A0_series_resistance[1]=");
-    Serial.println(config_settings_.A0_series_resistance[1]);
-    Serial.print("A0_series_capacitance[0]=");
-    printlne(config_settings_.A0_series_capacitance[0]);
-    Serial.print("A0_series_capacitance[1]=");
-    printlne(config_settings_.A0_series_capacitance[1]);
-    Serial.print("A1_series_resistance[0]=");
-    Serial.println(config_settings_.A1_series_resistance[0]);
-    Serial.print("A1_series_resistance[1]=");
-    Serial.println(config_settings_.A1_series_resistance[1]);
-    Serial.print("A1_series_resistance[2]=");
-    Serial.println(config_settings_.A1_series_resistance[2]);
-    Serial.print("A1_series_resistance[3]=");
-    Serial.println(config_settings_.A1_series_resistance[3]);
-    Serial.print("A1_series_capacitance[0]=");
-    printlne(config_settings_.A1_series_capacitance[0]);
-    Serial.print("A1_series_capacitance[1]=");
-    printlne(config_settings_.A1_series_capacitance[1]);
-    Serial.print("A1_series_capacitance[2]=");
-    printlne(config_settings_.A1_series_capacitance[2]);
-    Serial.print("A1_series_capacitance[3]=");
-    printlne(config_settings_.A1_series_capacitance[3]);
-  #else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
-    Serial.print("A0_series_resistance[0]=");
-    Serial.println(config_settings_.A0_series_resistance[0]);
-    Serial.print("A0_series_resistance[1]=");
-    Serial.println(config_settings_.A0_series_resistance[1]);
-    Serial.print("A0_series_resistance[2]=");
-    Serial.println(config_settings_.A0_series_resistance[2]);
-    Serial.print("A0_series_capacitance[0]=");
-    printlne(config_settings_.A0_series_capacitance[0]);
-    Serial.print("A0_series_capacitance[1]=");
-    printlne(config_settings_.A0_series_capacitance[1]);
-    Serial.print("A0_series_capacitance[2]=");
-    printlne(config_settings_.A0_series_capacitance[2]);
-    Serial.print("A1_series_resistance[0]=");
-    Serial.println(config_settings_.A1_series_resistance[0]);
-    Serial.print("A1_series_resistance[1]=");
-    Serial.println(config_settings_.A1_series_resistance[1]);
-    Serial.print("A1_series_resistance[2]=");
-    Serial.println(config_settings_.A1_series_resistance[2]);
-    Serial.print("A1_series_resistance[3]=");
-    Serial.println(config_settings_.A1_series_resistance[3]);
-    Serial.print("A1_series_resistance[4]=");
-    Serial.println(config_settings_.A1_series_resistance[4]);
-    Serial.print("A1_series_capacitance[0]=");
-    printlne(config_settings_.A1_series_capacitance[0]);
-    Serial.print("A1_series_capacitance[1]=");
-    printlne(config_settings_.A1_series_capacitance[1]);
-    Serial.print("A1_series_capacitance[2]=");
-    printlne(config_settings_.A1_series_capacitance[2]);
-    Serial.print("A1_series_capacitance[3]=");
-    printlne(config_settings_.A1_series_capacitance[3]);
-    Serial.print("A1_series_capacitance[4]=");
-    printlne(config_settings_.A1_series_capacitance[4]);
-    Serial.print("signal_generator_board_i2c_address=");
-    Serial.println(config_settings_.signal_generator_board_i2c_address, DEC);
-  #endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
-
-  Serial.print("switching_board_i2c_address=");
-  Serial.println(config_settings_.switching_board_i2c_address, DEC);
-  Serial.print("amplifier_gain=");
-  Serial.println(config_settings_.amplifier_gain);
-  Serial.print("voltage_tolerance=");
-  Serial.println(config_settings_.voltage_tolerance);
 
   // Check how many switching boards are connected.  Each additional board's
   // address must equal the previous boards address +1 to be valid.
   number_of_channels_ = 0;
 
   uint8_t data[2];
+
+  /* ## Initialize switching boards ## */
   for (uint8_t chip = 0; chip < 8; chip++) {
-    // set IO ports as inputs
+    /*  - Set IO ports as inputs. */
     data[0] = PCA9505_CONFIG_IO_REGISTER_;
     data[1] = 0xFF;
-    i2c_write(config_settings_.switching_board_i2c_address + chip,
-              data, 2);
+    i2c_write(config_settings_.switching_board_i2c_address + chip, data, 2);
 
-    // read back the register value
-    i2c_read(config_settings_.switching_board_i2c_address + chip,
-             data, 1);
+    /*  - Read back the register value. */
+    i2c_read(config_settings_.switching_board_i2c_address + chip, data, 1);
 
-    // if it matches what we previously set, this might be a PCA9505 chip
+    /*  - If read value matches what we previously set, this might be a PCA9505
+     *    chip. */
     if (data[0] == 0xFF) {
-      // try setting all ports in output mode and initialize to ground
+      /*   - Try setting all ports in output mode and initialize to ground. */
       uint8_t port=0;
-      for (; port<5; port++) {
+      for (; port < 5; port++) {
         data[0] = PCA9505_CONFIG_IO_REGISTER_ + port;
         data[1] = 0x00;
-        i2c_write(config_settings_.switching_board_i2c_address + chip,
-                  data, 2);
-        i2c_read(config_settings_.switching_board_i2c_address + chip,
-                  data, 1);
+        i2c_write(config_settings_.switching_board_i2c_address + chip, data,
+                  2);
+        i2c_read(config_settings_.switching_board_i2c_address + chip, data, 1);
 
-        // check that we successfully set the IO config register to 0x00
+        /*    - Check that we successfully set the IO config register to 0x00
+         */
         if (data[0] != 0x00) {
           break;
         }
         data[0] = PCA9505_OUTPUT_PORT_REGISTER_ + port;
         data[1] = 0xFF;
-        i2c_write(config_settings_.switching_board_i2c_address + chip,
-                  data, 2);
+        i2c_write(config_settings_.switching_board_i2c_address + chip, data,
+                  2);
       }
 
-      // if port=5, it means that we successfully initialized all IO config
-      // registers to 0x00, and this is probably a PCA9505 chip
-      if (port==5) {
-        Serial.print("HV board ");
-        Serial.print((int)chip);
-        Serial.println(" connected.");
+      /*   - Try setting all ports in output mode and initialize to ground. */
+      /*   - If `port` is equal to `5`, it means that we successfully
+       *     initialized all IO config registers to 0x00, and this is probably
+       *     a PCA9505 chip. */
+      if (port == 5) {
         if (number_of_channels_ == 40 * chip) {
           number_of_channels_ = 40 * (chip + 1);
         }
       }
     }
   }
-  Serial.print(number_of_channels_);
-  Serial.println(" channels available.");
 
-  // set all digital pots
+  /* ## Set all digital pots ## */
 
-  // Versions > 1.2 use the built in 5V AREF
+  /*  - Versions > 1.2 use the built in 5V `AREF`. */
   #if ___HARDWARE_MAJOR_VERSION___ == 1 && ___HARDWARE_MINOR_VERSION___ < 3
     set_pot(POT_INDEX_AREF_, config_settings_.aref);
   #endif
@@ -448,6 +400,8 @@ void DMFControlBoard::begin() {
     set_pot(POT_INDEX_WAVEOUT_GAIN_2_, 0);
   #endif
 
+  /* ## Select smallest series resistor for both analog input circuits ## */
+  /* TODO: Should we be selecting the _largest_ resistor here instead? */
   set_series_resistor(0, 0);
   set_series_resistor(1, 0);
 #ifdef AVR // only on Arduino Mega 2560

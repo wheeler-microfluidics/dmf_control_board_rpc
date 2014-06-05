@@ -95,8 +95,8 @@ public:
   static const uint16_t PERSISTENT_SERIAL_NUMBER_ADDRESS = 19;
 
   // protocol constants
-  static const uint16_t MAX_PAYLOAD_LENGTH =            2000;
-  static const uint16_t MAX_DEBUG_BUFFER_LENGTH =       1000;
+  static const uint16_t MAX_PAYLOAD_LENGTH =            60;
+  static const uint16_t MAX_DEBUG_BUFFER_LENGTH =       60;
 
   // reserved commands
   static const uint8_t CMD_GET_PROTOCOL_NAME =          0x80;
@@ -389,8 +389,7 @@ protected:
   void bytes_written(uint16_t bytes) { bytes_written_+=bytes; }
 
   template<typename T>
-    void serialize(T data,uint16_t size) {
-      serialize((const uint8_t*)data,size); }
+  void serialize(T data, uint16_t size) { serialize((const uint8_t*)data, sizeof(T)); }
   void serialize(const uint8_t* u, const uint16_t size);
   void send_reply(const uint8_t return_code);
 

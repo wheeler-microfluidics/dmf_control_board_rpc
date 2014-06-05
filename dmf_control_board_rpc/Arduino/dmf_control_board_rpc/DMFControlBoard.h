@@ -30,6 +30,65 @@ along with dmf_control_board.  If not, see <http://www.gnu.org/licenses/>.
 #define ATX_POWER_SUPPLY
 #endif
 
+
+struct PeakToPeakMeasurement {
+  uint8_t analog_pin_index_;
+  int8_t resistor_index_;
+  float reading_sum_;
+  uint16_t reading_count_;
+  uint16_t max_reading_;
+  uint16_t min_reading_;
+  bool saturated_;
+  const uint16_t SATURATION_THRESHOLD_READING = 820;
+
+  PeakToPeakMeasurement(uint8_t analog_pin_index, int8_t resistor_index)
+    : analog_pin_index_(analog_pin_index), resistor_index_(resistor_index),
+      saturated_(false) {
+    reset_extrema();
+  }
+
+  void reset_extrema() {
+    min_reading_ = 1023;
+    max_reading_ = 0;
+    reading_count_ = 0;
+    reading_sum_ = 0;
+  }
+
+  bool valid() const {
+    return !(max_reading_ == 0 || (min_reading_ == 1023 && !saturated_));
+  }
+
+  uint16_t peak_to_peak() const { return max_reading_ - min_reading_; }
+
+  uint16_t mean() const { return reading_sum_ / reading_count_; }
+
+  bool update(uint16_t reading) {
+    /* Return `t{ue` if series resistor needs to be updated. */
+
+    if (reading > SATURATION_THRESHOLD_READING) {
+      /* The ADC is saturated, so use a smaller resistor and reset the peak. */
+      if (resistor_index_ > 0) {
+        reset_extrema();
+        resistor_index_--;
+        return true;
+      } else {
+        /* The ADC is still saturated using the lowest available resistor
+         * value.  Mark measurement as saturated. */
+        saturated_ = true;
+        resistor_index_ = -1;
+      }
+    } else {
+      /* Update local stats based on reading. */
+      max_reading_ = (reading > max_reading_) ? reading : max_reading_;
+      min_reading_ = (reading < min_reading_) ? reading : min_reading_;
+      reading_sum_ += reading;
+      reading_count_++;
+    }
+    return false;
+  }
+};
+
+
 class DMFControlBoard : public RemoteObject {
 public:
   static const uint8_t SINE = 0;
@@ -125,7 +184,21 @@ public:
 
     /**\brief voltage tolerance for amplifier gain adjustment.*/
     float voltage_tolerance;
+
+    uint8_t A0_series_resistor_count() const {
+      return sizeof(A0_series_resistance) / sizeof(float);
+    }
+    uint8_t A1_series_resistor_count() const {
+      return sizeof(A1_series_resistance) / sizeof(float);
+    }
   };
+
+  static const uint16_t MAX_SAMPLE_COUNT = 250;
+
+  float high_voltage_samples[MAX_SAMPLE_COUNT];
+  int8_t high_voltage_resistor_indexes[MAX_SAMPLE_COUNT];
+  float feedback_voltage_samples[MAX_SAMPLE_COUNT];
+  int8_t feedback_voltage_resistor_indexes[MAX_SAMPLE_COUNT];
 
   // TODO:
   //  Eventually, all of these variables should defined only on the arduino.
@@ -186,6 +259,9 @@ public:
 
   void begin();
 
+  void measure(PeakToPeakMeasurement &measurement);
+  void update_amplifier_gain(PeakToPeakMeasurement &fb_measurement,
+                             PeakToPeakMeasurement &hv_measurement);
   // local accessors
   const char* protocol_name() { return PROTOCOL_NAME_; }
   const char* protocol_version() { return PROTOCOL_VERSION_; }
@@ -267,8 +343,8 @@ public:
     return RETURN_BAD_VALUE_S;
   }
 #endif  //#if ___HARDWARE_MAJOR_VERSION___ == 1
-  float measure_impedance(uint16_t sampling_time_ms, uint16_t n_samples,
-                          uint16_t delay_between_samples_ms);
+  uint16_t measure_impedance(uint16_t sampling_time_ms, uint16_t n_samples,
+                             uint16_t delay_between_samples_ms);
 #ifdef AVR
   uint8_t set_adc_prescaler(const uint8_t index);
 #endif
