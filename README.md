@@ -1,5 +1,5 @@
 TODO
 ====
 
- - Update `set_waveform_voltage`/`waveform_voltage` methods to use new
-   Protocol-buffer signal-generator board API.
+ - Add support for "old-style" switching boards _(i.e., without on-board
+   `atmega328`)_.
