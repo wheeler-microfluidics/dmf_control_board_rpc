@@ -260,8 +260,7 @@ public:
   void begin();
 
   void measure(PeakToPeakMeasurement &measurement);
-  void update_amplifier_gain(PeakToPeakMeasurement &fb_measurement,
-                             PeakToPeakMeasurement &hv_measurement);
+  void update_amplifier_gain(PeakToPeakMeasurement &hv_measurement);
   // local accessors
   const char* protocol_name() { return PROTOCOL_NAME_; }
   const char* protocol_version() { return PROTOCOL_VERSION_; }

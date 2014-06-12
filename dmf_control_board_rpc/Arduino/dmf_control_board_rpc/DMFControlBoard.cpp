@@ -88,9 +88,7 @@ void DMFControlBoard::measure(PeakToPeakMeasurement &measurement) {
 
 
 void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
-                                            &fb_measurement,
-                                            PeakToPeakMeasurement
-                                            &hv_measurement) {
+                                               &hv_measurement) {
   /* Adjust amplifier gain (only if the hv resistor is the same as on the
    * previous reading; otherwise it may not have had enough time to get a good
    * reading). */
@@ -102,23 +100,7 @@ void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
                 [hv_measurement.resistor_index_]);
     float measured_voltage, set_voltage;
     int16_t hv_pk_pk = hv_measurement.peak_to_peak();
-#if ___HARDWARE_MAJOR_VERSION___ == 1
-    float V_fb;
-    int16_t fb_pk_pk = fb_measurement.peak_to_peak();
 
-    if (fb_measurement.saturated_ || fb_pk_pk < 0) {
-      V_fb = 0;
-    } else {
-      V_fb = fb_pk_pk * 5.0 / 1023 / sqrt(2) / 2;
-    }
-    measured_voltage = (hv_pk_pk * 5.0 / 1023.0 // measured Vrms /
-                        / sqrt(2) / 2) /
-                        (1 / sqrt(pow(10e6 / R   // transfer
-                                      + 1, 2)    // function
-                                  + pow(10e6 * C * 2 * M_PI *
-                                        waveform_frequency_, 2)));
-    set_voltage = waveform_voltage_ + V_fb;
-#else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
     measured_voltage = (hv_pk_pk * 5.0 / 1023.0  // measured Vrms /
                         / sqrt(2) / 2) /
                         (1 / sqrt(pow(10e6 / R,   // transfer
@@ -126,7 +108,7 @@ void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
                                   pow(10e6 * C * 2 * M_PI *
                                       waveform_frequency_, 2)));
     set_voltage = waveform_voltage_;
-#endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
+
     // If we're outside of the voltage tolerance, update the gain.
     if (abs(measured_voltage - set_voltage) >
         config_settings_.voltage_tolerance) {
@@ -142,11 +124,7 @@ void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
 
       /* Update output voltage (accounting for amplifier gain and for the
        * voltage drop across the feedback resistor). */
-#if ___HARDWARE_MAJOR_VERSION___ == 1
-      target = waveform_voltage_ + V_fb;
-#else   // #if ___HARDWARE_MAJOR_VERSION___ == 1
       target = waveform_voltage_;
-#endif // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
       /* Subtract small value to work-around Protocol Buffer serialization issue.
        *
        * The symptom of the serialization issue presents as certain floating
@@ -262,7 +240,7 @@ uint16_t DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
        * high-voltage signal, adjust the gain correction factor we apply to
        * waveform amplitude changes to compensate for deviations from our model
        * of the gain of the amplifier. */
-      update_amplifier_gain(hv_measurement, fb_measurement);
+      update_amplifier_gain(hv_measurement);
     }
 
     /* Store measurements into result buffers. */
