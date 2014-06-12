@@ -63,7 +63,7 @@ struct PeakToPeakMeasurement {
   uint16_t mean() const { return reading_sum_ / reading_count_; }
 
   bool update(uint16_t reading) {
-    /* Return `t{ue` if series resistor needs to be updated. */
+    /* Return `true` if series resistor needs to be updated. */
 
     if (reading > SATURATION_THRESHOLD_READING) {
       /* The ADC is saturated, so use a smaller resistor and reset the peak. */

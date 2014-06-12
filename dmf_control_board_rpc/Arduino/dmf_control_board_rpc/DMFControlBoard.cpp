@@ -244,11 +244,9 @@ uint16_t DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
     }
 
     /* Store measurements into result buffers. */
-    //high_voltage_samples[i] = hv_pk_pk;
-    high_voltage_samples[i] = hv_measurement.mean();
+    high_voltage_samples[i] = hv_pk_pk;
     high_voltage_resistor_indexes[i] = hv_measurement.resistor_index_;
-    //feedback_voltage_samples[i] = fb_pk_pk;
-    feedback_voltage_samples[i] = fb_measurement.mean();
+    feedback_voltage_samples[i] = fb_pk_pk;
     feedback_voltage_resistor_indexes[i] = fb_measurement.resistor_index_;
 
     /* There is a new request available on the serial port.  Stop what we're
