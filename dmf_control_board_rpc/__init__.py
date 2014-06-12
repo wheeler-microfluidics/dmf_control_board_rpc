@@ -49,9 +49,12 @@ def get_sources():
     Return Arduino source file paths.  This includes any supplementary source
     files that are not contained in Arduino libraries.
     '''
-    return (get_sketch_directory().files('*.c*') +
-            get_nano_code_directory().files('*.c*') +
-            get_nanopb_directory().files('*.c*') +
+    return (get_sketch_directory().files('*.c') +
+            get_nano_code_directory().files('*.c') +
+            get_nanopb_directory().files('*.c') +
+    	    get_sketch_directory().files('*.cpp') +
+            get_nano_code_directory().files('*.cpp') +
+            get_nanopb_directory().files('*.cpp') +
             nadamq.get_sources())
 
 
