@@ -1,3 +1,5 @@
+import platform
+import os
 from pprint import pprint
 import sys
 
@@ -18,7 +20,7 @@ pprint(dmf_control_board_rpc_files)
 
 PROTO_PREFIX = 'commands'
 
-DEFAULT_ARDUINO_BOARDS = ['uno']
+DEFAULT_ARDUINO_BOARDS = ['mega2560']
 
 setup(name='wheeler.dmf_control_board_rpc',
       version=version.getVersion(),
@@ -61,8 +63,17 @@ def generate_command_code():
 def generate_nanopb_code():
     nanopb_home = package_path().joinpath('libs', 'nanopb').abspath()
     output_dir = package_path().joinpath('protobuf').abspath()
-    sh('cd %s; ./protoc.sh %s %s.proto .' % (output_dir, nanopb_home,
-                                             PROTO_PREFIX))
+    working_dir = os.getcwd()
+    try:
+        os.chdir(output_dir)
+        print os.getcwd()
+        if platform.platform().startswith('Windows'):
+            sh('protoc --nanopb_out=nano --python_out=py %s.proto' %
+               PROTO_PREFIX)
+        else:
+            sh('./protoc.sh "%s" %s.proto .' % (nanopb_home, PROTO_PREFIX))
+    finally:
+        os.chdir(working_dir)
 
 
 @task
@@ -78,7 +89,7 @@ def copy_nanopb_python_module():
 @needs('copy_nanopb_python_module', 'generate_command_code')
 @cmdopts([('sconsflags=', 'f', 'Flags to pass to SCons.'),
           ('boards=', 'b', 'Comma-separated list of board names to compile '
-           'for (e.g., `uno`).')])
+           'for (e.g., `mega2560`).')])
 def build_firmware():
     scons_flags = getattr(options, 'sconsflags', '')
     boards = [b.strip() for b in getattr(options, 'boards', '').split(',')

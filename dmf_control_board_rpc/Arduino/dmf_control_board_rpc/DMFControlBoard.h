@@ -39,7 +39,7 @@ struct PeakToPeakMeasurement {
   uint16_t max_reading_;
   uint16_t min_reading_;
   bool saturated_;
-  const uint16_t SATURATION_THRESHOLD_READING = 820;
+  static const uint16_t SATURATION_THRESHOLD_READING = 820;
 
   PeakToPeakMeasurement(uint8_t analog_pin_index, int8_t resistor_index)
     : analog_pin_index_(analog_pin_index), resistor_index_(resistor_index),
