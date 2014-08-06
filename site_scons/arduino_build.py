@@ -73,8 +73,10 @@ def same_file(p1, p2):
 
 def get_usb_tty(rx):
     usb_ttys = glob(rx)
-    if len(usb_ttys) == 1: return usb_ttys[0]
-    else: return None
+    if len(usb_ttys) == 1:
+        return usb_ttys[0]
+    else:
+        return None
 
 
 def gather_sources(source_root):
@@ -89,7 +91,7 @@ def get_lib_candidate_list(sketch_path, arduino_version):
     '''
     # Generate list of library headers included in .pde file
     lib_candidates = []
-    ptn_lib = re.compile(r'^[ ]*#[ ]*include [<"](.*)\.h[>"]')
+    ptn_lib = re.compile(r'^[ ]*#[ ]*include [<"](.*\.h)[>"]')
     for line in open(sketch_path):
         result = ptn_lib.findall(line)
         if result:
@@ -97,8 +99,8 @@ def get_lib_candidate_list(sketch_path, arduino_version):
 
     # Hack. In version 20 of the Arduino IDE, the Ethernet library depends
     # implicitly on the SPI library.
-    if arduino_version >= 20 and 'Ethernet' in lib_candidates:
-        lib_candidates += ['SPI']
+    if arduino_version >= 20 and 'Ethernet.h' in lib_candidates:
+        lib_candidates += ['SPI.h']
     return lib_candidates
 
 
@@ -381,7 +383,7 @@ class ArduinoBuildContext(object):
         upload_protocol = self.get_board_conf('upload.protocol')
         upload_speed = self.get_board_conf('upload.speed')
 
-        avrdude_opts = ['-D', '-V', '-F', '-c %s' % upload_protocol,
+        avrdude_opts = ['-V', '-F', '-c %s' % upload_protocol,
                         '-b %s' % upload_speed, '-p %s' % self.MCU,
                         '-P %s' % self.ARDUINO_PORT,
                         '-U flash:w:$SOURCES']
@@ -399,6 +401,13 @@ class ArduinoBuildContext(object):
                         core_sources if os.path.basename(x) != 'main.cpp']
         return core_sources
 
+    def get_lib_path(self, lib):
+        for lib_root in self.ARDUINO_LIBS[::-1]:
+            for f in path(lib_root).walkfiles():
+                if f.name == lib:
+                    return f
+        raise ValueError('Library not found: %s' % lib)
+
     def get_lib_sources(self, env):
         '''
         Add VariantDir references for all libraries in lib_candidates to the
@@ -410,31 +419,31 @@ class ArduinoBuildContext(object):
         lib_candidates = get_lib_candidate_list(self.sketch_path,
                                                 self.ARDUINO_VER)
         all_libs_sources = []
-        all_lib_names = set()
-        index = 0
-        for orig_lib_dir in self.ARDUINO_LIBS:
-            lib_sources = []
-            lib_dir = self.build_root.joinpath('lib_%02d' % index)
-            print 'build_root: %s' % self.build_root
-            env.VariantDir(lib_dir, orig_lib_dir)
-            for lib_path in path(orig_lib_dir).dirs():
-                lib_name = lib_path.name
-                if not lib_name in lib_candidates:
-                    # This library is not included in the .pde file, so skip it
-                    continue
-                elif lib_name in all_lib_names:
-                    # This library has already been processed, so skip it
-                    continue
-                all_lib_names.add(lib_name)
-                env.Append(CPPPATH=lib_path.replace(orig_lib_dir, lib_dir))
-                lib_sources = gather_sources(lib_path)
-                util_dir = path(lib_path).joinpath('utility')
-                if os.path.exists(util_dir) and os.path.isdir(util_dir):
-                    lib_sources += gather_sources(util_dir)
-                    env.Append(CPPPATH=util_dir.replace(orig_lib_dir, lib_dir))
-                lib_sources = [x.replace(orig_lib_dir, lib_dir) for x in lib_sources]
-                all_libs_sources += lib_sources
-            index += 1
+
+        lib_dirs = set()
+        for lib in lib_candidates:
+            try:
+                lib_parent = self.get_lib_path(lib).parent
+                lib_dirs.add(lib_parent)
+                env.Append(CPPPATH=lib_parent)
+            except ValueError:
+                pass
+
+        all_libs_sources = set()
+
+        for i, lib_dir in enumerate(lib_dirs):
+            lib_dir_dir = self.build_root.joinpath('lib_dir_%02d' % i)
+            env.VariantDir(lib_dir_dir, lib_dir)
+            lib_dir_sources = gather_sources(lib_dir)
+
+            util_dir = path(lib_dir).joinpath('utility')
+            if os.path.exists(util_dir) and os.path.isdir(util_dir):
+                lib_dir_sources += gather_sources(util_dir)
+                env.Append(CPPPATH=util_dir.replace(lib_dir, lib_dir_dir))
+
+            all_libs_sources.update([x.replace(lib_dir, lib_dir_dir)
+                                     for x in lib_dir_sources])
+
         return all_libs_sources
 
     # -----------------------------------

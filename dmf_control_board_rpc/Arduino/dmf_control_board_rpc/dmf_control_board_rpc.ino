@@ -4,6 +4,8 @@
 #include "OneWire.h"
 #include "EEPROM.h"
 #include "PacketParser.h"
+#include "UnionMessage.h"
+#include "SignalGeneratorBoard_pb.h"
 #include "Node.h"
 #include "CommandPacketHandler.h"
 #include "NodeCommandProcessor.h"
@@ -12,7 +14,7 @@
 //#define DISABLE_I2C
 //#define DISABLE_SERIAL
 
-#define PACKET_SIZE   24
+#define I2C_PACKET_SIZE  64
 /* To save RAM, the serial-port interface may be disabled by defining
  * `DISABLE_SERIAL`. */
 #ifndef DISABLE_SERIAL
@@ -20,7 +22,7 @@ uint8_t packet_buffer[PACKET_SIZE];
 #endif  // #ifndef DISABLE_SERIAL
 
 #ifndef DISABLE_I2C
-uint8_t i2c_packet_buffer[PACKET_SIZE];
+uint8_t i2c_packet_buffer[I2C_PACKET_SIZE];
 uint8_t processing_i2c_request = false;
 uint8_t i2c_response_size_sent = false;
 FixedPacket i2c_packet;

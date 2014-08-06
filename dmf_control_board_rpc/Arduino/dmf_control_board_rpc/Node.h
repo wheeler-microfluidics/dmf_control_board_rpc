@@ -25,6 +25,7 @@ extern void i2c_receive_event(int byte_count);
 extern void i2c_request_event();
 #endif  // #ifndef DISABLE_I2C
 
+#define PACKET_SIZE  (8 + (DMFControlBoard::MAX_SAMPLE_COUNT * sizeof(int16_t)))
 
 class Node {
 public:
@@ -34,10 +35,47 @@ public:
 
   uint32_t total_ram_size() { return ram_size(); }
   uint32_t ram_free() { return free_memory(); }
+  uint32_t packet_size() const { return PACKET_SIZE; }
 
   /**************************************************************
    * METHODS
    **************************************************************/
+
+  uint32_t high_voltage_samples_address() {
+    return (uint32_t)(&board_.high_voltage_samples[0]);
+  }
+
+  uint16_t most_recent_sample_count() const {
+    return board_.most_recent_sample_count_;
+  }
+
+  Int16Array high_voltage_samples() {
+    Int16Array result;
+    result.data = &board_.high_voltage_samples[0];
+    result.length = board_.most_recent_sample_count_;
+    return result;
+  }
+
+  UInt8Array readn_uint8(uint32_t address, uint16_t count) {
+    UInt8Array result;
+    result.data = (uint8_t *)(address);
+    result.length = count;
+    return result;
+  }
+
+  FloatArray readn_float(uint32_t address, uint16_t count) {
+    FloatArray result;
+    result.data = (float *)(address);
+    result.length = count;
+    return result;
+  }
+
+  Int16Array readn_int16(uint32_t address, uint16_t count) {
+    Int16Array result;
+    result.data = (int16_t *)(address);
+    result.length = count;
+    return result;
+  }
 
   float read_sample_voltage(uint8_t analog_input_key,
                             uint16_t index) const {
@@ -150,13 +188,15 @@ public:
     return false;
   }
 
-  float signal_waveform_voltage(uint8_t return_byte_index) { return board_.waveform_voltage(return_byte_index); }
+  float signal_waveform_voltage() const {
+    return board_.waveform_voltage();
+  }
 
   float set_signal_waveform_voltage(float vrms) {
     return board_.set_waveform_voltage(vrms);
   }
 
-  float signal_waveform_frequency(uint8_t return_byte_index) { return board_.waveform_frequency(return_byte_index); }
+  float signal_waveform_frequency() { return board_.waveform_frequency(); }
 
   float set_signal_waveform_frequency(float frequency) {
     return board_.set_waveform_frequency(frequency);

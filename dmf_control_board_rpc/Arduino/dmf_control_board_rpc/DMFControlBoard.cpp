@@ -30,10 +30,10 @@ along with dmf_control_board.  If not, see <http://www.gnu.org/licenses/>.
   extern DueFlashStorage EEPROM;
 #endif
 #include <math.h>
-#include "signal_generator_board.rpc.h"
+#include "SignalGeneratorBoard_pb.h"
 #include "NodeCommandProcessor.h"
 #include "UnionMessage.h"
-#include "commands.pb.h"
+#include "commands_pb.h"
 #include "remote_i2c_command.h"
 
 #ifdef AVR // only on Arduino Mega 2560
@@ -61,7 +61,8 @@ const char DMFControlBoard::SOFTWARE_VERSION_[] = ___SOFTWARE_VERSION___;
 const char DMFControlBoard::URL_[] =
     "http://microfluidics.utoronto.ca/dmf_control_board";
 
-DMFControlBoard::DMFControlBoard() : RemoteObject(true) {
+DMFControlBoard::DMFControlBoard()
+  : RemoteObject(), most_recent_sample_count_(0) {
   /* Initialize sample values to allow for testing the following methods:
    *
    *  - `Node::read_sample_voltage`
@@ -215,6 +216,7 @@ uint16_t DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
    * __NB__ In the case where the signal saturates the lowest resistor, mark
    * the measurement as saturated/invalid. */
   uint16_t i = 0;
+  most_recent_sample_count_ = 0;
 
   for (; i < n_samples; i++) {
     PeakToPeakMeasurement hv_measurement(0, A0_series_resistor_index_);
@@ -256,6 +258,7 @@ uint16_t DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
     uint32_t t_delay = millis();
     while (millis() - t_delay < delay_between_samples_ms) {}
   }
+  most_recent_sample_count_ = i;
 
   /* Set the resistors back to their original states. */
   set_series_resistor(0, original_A0_index);
@@ -536,6 +539,7 @@ uint8_t DMFControlBoard::set_series_resistor(uint8_t channel, uint8_t index) {
 
 // update the state of all channels
 void DMFControlBoard::update_all_channels() {
+#if 0
   // Each PCA9505 chip has 5 8-bit output registers for a total of 40 outputs
   // per chip. We can have up to 8 of these chips on an I2C bus, which means
   // we can control up to 320 channels.
@@ -554,6 +558,7 @@ void DMFControlBoard::update_all_channels() {
                 data, 2);
     }
   }
+#endif
 }
 
 // Update the state of single channel.
@@ -695,7 +700,7 @@ void DMFControlBoard::save_config() {
 }
 
 
-float DMFControlBoard::waveform_voltage(uint8_t return_byte_index) {
+float DMFControlBoard::waveform_voltage() {
 #if ___HARDWARE_MAJOR_VERSION___ == 1
     return waveform_voltage_;
 #else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
@@ -723,16 +728,12 @@ float DMFControlBoard::waveform_voltage(uint8_t return_byte_index) {
       SignalGeneratorWaveformVoltageResponse_fields, &data[0],
       sizeof(data));
 
-  if (return_byte_index < return_code) {
-    return data[return_byte_index]; //message.response.result;
-  } else {
-    return message.response.result;
-  }
+  return message.response.result;
 #endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
 }
 
 
-float DMFControlBoard::set_waveform_voltage(const float output_vrms) {
+float DMFControlBoard::set_waveform_voltage(float output_vrms) {
 #if ___HARDWARE_MAJOR_VERSION___==1
   float step = output_vrms / amplifier_gain_ * 2 * sqrt(2) / 4 * 255;
   if (output_vrms < 0 || step > 255) {
@@ -777,7 +778,7 @@ float DMFControlBoard::set_waveform_voltage(const float output_vrms) {
 }
 
 
-float DMFControlBoard::waveform_frequency(uint8_t return_byte_index) {
+float DMFControlBoard::waveform_frequency() {
 #if ___HARDWARE_MAJOR_VERSION___ == 1
   return waveform_frequency_;
 #else  // #if ___HARDWARE_MAJOR_VERSION___ == 1
@@ -808,13 +809,7 @@ float DMFControlBoard::waveform_frequency(uint8_t return_byte_index) {
       SignalGeneratorWaveformFrequencyResponse_fields, &data[0],
       sizeof(data));
 
-  if (return_byte_index < return_code) {
-    return data[return_byte_index]; //message.response.result;
-  } else {
-    return message.response.result;
-  }
-
-  return data[return_byte_index]; //message.response.result;
+  return message.response.result;
 #endif  // #if ___HARDWARE_MAJOR_VERSION___ == 1 / #else
 }
 

@@ -193,56 +193,18 @@ public:
     }
   };
 
-  static const uint16_t MAX_SAMPLE_COUNT = 250;
+  static const uint16_t MAX_SAMPLE_COUNT = 249;
 
-  float high_voltage_samples[MAX_SAMPLE_COUNT];
+  uint16_t most_recent_sample_count_;
+  int16_t high_voltage_samples[MAX_SAMPLE_COUNT];
   int8_t high_voltage_resistor_indexes[MAX_SAMPLE_COUNT];
-  float feedback_voltage_samples[MAX_SAMPLE_COUNT];
+  int16_t feedback_voltage_samples[MAX_SAMPLE_COUNT];
   int8_t feedback_voltage_resistor_indexes[MAX_SAMPLE_COUNT];
 
   // TODO:
   //  Eventually, all of these variables should defined only on the arduino.
   //  The PC can interrogate device using `CMD_GET_NUMBER_OF_ADC_CHANNELS`.
   static const uint8_t NUMBER_OF_ADC_CHANNELS = 2;
-
-  // Accessors and mutators
-  static const uint8_t CMD_GET_NUMBER_OF_CHANNELS =         0xA0;
-  static const uint8_t CMD_GET_STATE_OF_ALL_CHANNELS =      0xA1;
-  static const uint8_t CMD_SET_STATE_OF_ALL_CHANNELS =      0xA2;
-  static const uint8_t CMD_GET_STATE_OF_CHANNEL =           0xA3;
-  static const uint8_t CMD_SET_STATE_OF_CHANNEL =           0xA4;
-  static const uint8_t CMD_GET_WAVEFORM =                   0xA5;
-  static const uint8_t CMD_SET_WAVEFORM =                   0xA6;
-  static const uint8_t CMD_GET_WAVEFORM_VOLTAGE =           0xA7;
-  static const uint8_t CMD_SET_WAVEFORM_VOLTAGE =           0xA8;
-  static const uint8_t CMD_GET_WAVEFORM_FREQUENCY =         0xA9;
-  static const uint8_t CMD_SET_WAVEFORM_FREQUENCY =         0xAA;
-  static const uint8_t CMD_GET_SAMPLING_RATE =              0xAB;
-  static const uint8_t CMD_SET_SAMPLING_RATE =              0xAC;
-  static const uint8_t CMD_GET_SERIES_RESISTOR_INDEX =      0xAD;
-  static const uint8_t CMD_SET_SERIES_RESISTOR_INDEX =      0xAE;
-  static const uint8_t CMD_GET_SERIES_RESISTANCE =          0xAF;
-  static const uint8_t CMD_SET_SERIES_RESISTANCE =          0xB0;
-  static const uint8_t CMD_GET_SERIES_CAPACITANCE =         0xB1;
-  static const uint8_t CMD_SET_SERIES_CAPACITANCE =         0xB2;
-  static const uint8_t CMD_GET_AMPLIFIER_GAIN =             0xB3;
-  static const uint8_t CMD_SET_AMPLIFIER_GAIN =             0xB4;
-  static const uint8_t CMD_GET_AUTO_ADJUST_AMPLIFIER_GAIN = 0xB5;
-  static const uint8_t CMD_SET_AUTO_ADJUST_AMPLIFIER_GAIN = 0xB6;
-  static const uint8_t CMD_GET_POWER_SUPPLY_PIN =           0xB7;
-  static const uint8_t CMD_GET_WATCHDOG_STATE =             0xB8;
-  static const uint8_t CMD_SET_WATCHDOG_STATE =             0xB9;
-  static const uint8_t CMD_GET_WATCHDOG_ENABLED =           0xBA;
-  static const uint8_t CMD_SET_WATCHDOG_ENABLED =           0xBB;
-  static const uint8_t CMD_GET_ATX_POWER_STATE =            0xBC;
-  static const uint8_t CMD_SET_ATX_POWER_STATE =            0xBD;
-
-  // Other commands
-  static const uint8_t CMD_SYSTEM_RESET =                   0xF1; //TODO
-  static const uint8_t CMD_DEBUG_MESSAGE =                  0xF2; //TODO
-  static const uint8_t CMD_DEBUG_ON =                       0xF3; //TODO
-  static const uint8_t CMD_MEASURE_IMPEDANCE =              0xF4;
-  static const uint8_t CMD_RESET_CONFIG_TO_DEFAULTS =       0xF5;
 
   //////////////////////////////////////////////////////////////////////////////
   //
@@ -325,10 +287,10 @@ public:
   void load_config(bool use_defaults=false);
   void save_config();
   version_t config_version();
-  float set_waveform_voltage(const float output_vrms);
-  float waveform_voltage(uint8_t return_byte_index);
+  float set_waveform_voltage(float output_vrms);
+  float waveform_voltage();
   float set_waveform_frequency(float frequency);
-  float waveform_frequency(uint8_t return_byte_index);
+  float waveform_frequency();
 #if ___HARDWARE_MAJOR_VERSION___ == 1
   uint8_t waveform() const {
     return digitalRead(WAVEFORM_SELECT_);
@@ -344,9 +306,7 @@ public:
 #endif  //#if ___HARDWARE_MAJOR_VERSION___ == 1
   uint16_t measure_impedance(uint16_t sampling_time_ms, uint16_t n_samples,
                              uint16_t delay_between_samples_ms);
-#ifdef AVR
   uint8_t set_adc_prescaler(const uint8_t index);
-#endif
   float series_resistance(uint8_t channel) {
     switch(channel) {
       case 0:

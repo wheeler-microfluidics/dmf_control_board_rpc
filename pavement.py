@@ -68,10 +68,14 @@ def generate_nanopb_code():
         os.chdir(output_dir)
         print os.getcwd()
         if platform.platform().startswith('Windows'):
-            sh('protoc --nanopb_out=nano --python_out=py %s.proto' %
-               PROTO_PREFIX)
+            #sh('protoc --nanopb_out=nano --python_out=py %s.proto' %
+               #PROTO_PREFIX)
+            raise RuntimeError('Windows compilation of protocol buffer '
+                               'commands not currently supported.')
         else:
-            sh('./protoc.sh "%s" %s.proto .' % (nanopb_home, PROTO_PREFIX))
+            #sh('./protoc.sh "%s" %s.proto .' % (nanopb_home, PROTO_PREFIX))
+            sh('./protoc.sh %s %s.proto . ; cd nano ; rename -f \'s/\.pb/_pb/g\' *.* ; sed \'s/\.pb/_pb/g\' -i *.h *.c ; mv *.* %s' % (
+                nanopb_home, PROTO_PREFIX, get_sketch_directory()))
     finally:
         os.chdir(working_dir)
 
