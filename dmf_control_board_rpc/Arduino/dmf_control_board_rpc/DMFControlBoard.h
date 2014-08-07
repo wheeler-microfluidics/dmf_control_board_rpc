@@ -193,7 +193,7 @@ public:
     }
   };
 
-  static const uint16_t MAX_SAMPLE_COUNT = 249;
+  static const uint16_t MAX_SAMPLE_COUNT = 255;
 
   uint16_t most_recent_sample_count_;
   int16_t high_voltage_samples[MAX_SAMPLE_COUNT];

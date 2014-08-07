@@ -56,6 +56,11 @@ public:
     return result;
   }
 
+  void write_uint8(uint32_t address, UInt8Array array) {
+    uint8_t *data = (uint8_t *)address;
+    memcpy(data, array.data, array.length);
+  }
+
   UInt8Array readn_uint8(uint32_t address, uint16_t count) {
     UInt8Array result;
     result.data = (uint8_t *)(address);

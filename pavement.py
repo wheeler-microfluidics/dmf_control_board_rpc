@@ -29,6 +29,8 @@ setup(name='wheeler.dmf_control_board_rpc',
       author_email='christian@fobel.net',
       url='http://github.com/wheeler-microfluidics/dmf_control_board_rpc.git',
       license='GPLv2',
+      install_requires=['nadamq', 'path_helpers', 'arduino_helpers',
+                        'clang_helpers', 'arduino_rpc', 'arduino_scons'],
       packages=['dmf_control_board_rpc'],
       package_data=dmf_control_board_rpc_files)
 
