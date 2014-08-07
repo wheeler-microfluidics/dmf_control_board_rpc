@@ -56,6 +56,27 @@ public:
     return result;
   }
 
+  Int8Array high_voltage_resistor_indexes() {
+    Int8Array result;
+    result.data = &board_.high_voltage_resistor_indexes[0];
+    result.length = board_.most_recent_sample_count_;
+    return result;
+  }
+
+  Int16Array feedback_voltage_samples() {
+    Int16Array result;
+    result.data = &board_.feedback_voltage_samples[0];
+    result.length = board_.most_recent_sample_count_;
+    return result;
+  }
+
+  Int8Array feedback_voltage_resistor_indexes() {
+    Int8Array result;
+    result.data = &board_.feedback_voltage_resistor_indexes[0];
+    result.length = board_.most_recent_sample_count_;
+    return result;
+  }
+
   void write_uint8(uint32_t address, UInt8Array array) {
     uint8_t *data = (uint8_t *)address;
     memcpy(data, array.data, array.length);
@@ -68,87 +89,14 @@ public:
     return result;
   }
 
-  FloatArray readn_float(uint32_t address, uint16_t count) {
-    FloatArray result;
-    result.data = (float *)(address);
-    result.length = count;
-    return result;
-  }
-
-  Int16Array readn_int16(uint32_t address, uint16_t count) {
-    Int16Array result;
-    result.data = (int16_t *)(address);
-    result.length = count;
-    return result;
-  }
-
-  float read_sample_voltage(uint8_t analog_input_key,
-                            uint16_t index) const {
-    /* # `read_sample_voltage` #
-     *
-     *  - `analog_input_key`:
-     *   - `1`: High-voltage.
-     *   - `2`: Feedback voltage. */
-    if (index >= board_.MAX_SAMPLE_COUNT) {
-      return -1;
-    }
-    switch (analog_input_key) {
-      case 1:
-        return board_.high_voltage_samples[index];
-      case 2:
-      default:
-        return board_.feedback_voltage_samples[index];
-    }
-  }
-
-  int8_t read_sample_resistor_index(uint8_t analog_input_key,
-                                    uint16_t index) const {
-    /* # `read_sample_resistor_index` #
-     *
-     *  - `analog_input_key`:
-     *   - `1`: High-voltage.
-     *   - `2`: Feedback voltage. */
-    if (index >= board_.MAX_SAMPLE_COUNT) {
-      return -2;
-    }
-    switch (analog_input_key) {
-      case 1:
-        return board_.high_voltage_resistor_indexes[index];
-      case 2:
-      default:
-        return board_.feedback_voltage_resistor_indexes[index];
-    }
-  }
-
-  uint8_t update_channel(const uint16_t channel, const uint8_t state) {
-    return board_.update_channel(channel, state);
-  }
-#if 0
-  void update_all_channels() {
-    board_.update_all_channels();
-  }
-  /* `get_state_of_all_channels`
-   *
-   * Return state of channels.
-   *
-   * ## TODO ##
-   *
-   * I/O multiplier switching board:
-   *
-   *  - Use 5 I2C requests to each switching board to load channel states.
-   *
-   * Arduino-based switching board:
-   *
-   *  - Use 5 I2C protocol buffer requests to each switching board to load
-   *    channel states. */
-  void get_state_of_all_channels();
-#endif
   void send_spi(uint8_t pin, uint8_t address, uint8_t data) {
     board_.send_spi(pin, address, data);
   }
+
   int8_t set_series_resistor_index(uint8_t index, uint8_t channel) {
     return board_.set_series_resistor(channel, index);
   }
+
   int8_t series_resistor_index(uint8_t channel) {
     switch(channel) {
       case 0:
@@ -162,35 +110,21 @@ public:
         break;
     }
   }
-#if 0
-  void load_config(bool use_defaults=false);
-  void save_config();
-#endif
+
+  void load_config(bool use_defaults) {
+    board_.load_config(use_defaults);
+  }
+
+  void save_config() {
+    board_.save_config();
+  }
+
   uint8_t set_adc_prescaler(const uint8_t index) {
     return board_.set_adc_prescaler(index);
   }
 
   uint8_t number_of_channels() const {
     return board_.number_of_channels_;
-  }
-
-  /* `get_state_of_all_channels`
-   *
-   * Return state of a single channel.
-   *
-   * ## TODO ##
-   *
-   * I/O multiplier switching board:
-   *
-   *  - Use I2C request to corresponding switching board to load channel
-   *    state.
-   *
-   * Arduino-based switching board:
-   *
-   *  - Use I2C protocol buffer request to corresponding switching board to
-   *    load channel state. */
-  bool state_of_channel(uint16_t channel) const {
-    return false;
   }
 
   float signal_waveform_voltage() const {
@@ -232,6 +166,7 @@ public:
   }
 
   float amplifier_gain() const { return board_.amplifier_gain_; }
+
   void set_amplifier_gain(float value) { board_.set_amplifier_gain(value); }
 
   bool auto_adjust_amplifier_gain() const {
