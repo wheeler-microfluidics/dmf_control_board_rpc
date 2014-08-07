@@ -75,9 +75,9 @@ def generate_nanopb_code():
             raise RuntimeError('Windows compilation of protocol buffer '
                                'commands not currently supported.')
         else:
-            #sh('./protoc.sh "%s" %s.proto .' % (nanopb_home, PROTO_PREFIX))
-            sh('./protoc.sh %s %s.proto . ; cd nano ; rename -f \'s/\.pb/_pb/g\' *.* ; sed \'s/\.pb/_pb/g\' -i *.h *.c ; mv *.* %s' % (
-                nanopb_home, PROTO_PREFIX, get_sketch_directory()))
+            sh('cd %s; ./protoc.sh %s %s.proto . ; ./protoc.sh %s custom.proto . ; cd nano ; rename -f \'s/\.pb/_pb/g\' *.* ; sed \'s/\.pb/_pb/g\' -i *.h *.c ; mv *.* %s' % (
+               output_dir, nanopb_home, PROTO_PREFIX, nanopb_home,
+               get_sketch_directory()))
     finally:
         os.chdir(working_dir)
 
@@ -87,8 +87,10 @@ def generate_nanopb_code():
 def copy_nanopb_python_module():
     code_dir = package_path().joinpath('protobuf', 'py').abspath()
     output_dir = package_path().abspath()
-    protobuf_commands_file = list(code_dir.files('*_pb2.py'))[0]
+    protobuf_commands_file = list(code_dir.files('commands_pb2.py'))[0]
     protobuf_commands_file.copy(output_dir.joinpath('protobuf_commands.py'))
+    protobuf_commands_file = list(code_dir.files('custom_pb2.py'))[0]
+    protobuf_commands_file.copy(output_dir.joinpath('protobuf_custom.py'))
 
 
 @task

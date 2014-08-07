@@ -2,9 +2,10 @@ import time
 
 from nadamq.command_proxy import (NodeProxy, CommandRequestManager,
                                   CommandRequestManagerDebug, SerialStream)
+from serial_device import get_serial_ports
 from .requests import (REQUEST_TYPES, CommandResponse, CommandRequest,
                        CommandType)
-from serial_device import get_serial_ports
+from .protobuf_custom import DescriptionStrings
 
 
 class DMFControlBoard(object):
@@ -85,22 +86,20 @@ class DMFControlBoard(object):
                                                     delay_between_samples_ms=
                                                     delay_between_samples_ms)
         measurements = pd.DataFrame(dtype=float, index=range(sample_count))
-        measurements['high-voltage',
-                     'voltage'] = [self.board
-                                   .read_sample_voltage(analog_input_key=1,
-                                                        index=j)
-                                   for j in range(sample_count)]
-        measurements['high-voltage', 'resistor_index'] = [
-            self.board.read_sample_resistor_index(analog_input_key=1, index=j)
-            for j in range(sample_count)]
-        measurements['feedback', 'voltage'] = [
-            self.board.read_sample_voltage(analog_input_key=2, index=j)
-            for j in range(sample_count)]
-        measurements['feedback', 'resistor_index'] = [
-            self.board.read_sample_resistor_index(analog_input_key=2, index=j)
-            for j in range(sample_count)]
+        measurements['high-voltage', 'voltage'] = (
+            self.board.high_voltage_samples())
+        measurements['high-voltage', 'resistor_index'] = (
+            self.board.high_voltage_resistor_indexes())
+        measurements['feedback', 'voltage'] = (
+            self.board.feedback_voltage_samples())
+        measurements['feedback', 'resistor_index'] = (
+            self.board.feedback_voltage_resistor_indexes())
 
         # The auto-amplifier gain is updated after measuring high-voltage
         # signal on the control board.
         self._auto_amplifier_gain_initialized = True
         return measurements
+
+    def description(self):
+        return dict([(k, self.board.description_string(key=v))
+                     for k, v in DescriptionStrings.items()])

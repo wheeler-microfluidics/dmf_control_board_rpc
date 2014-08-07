@@ -5,6 +5,7 @@
 #include "Array.h"
 #include "Memory.h"
 #include "DMFControlBoard.h"
+#include "custom_pb.h"
 
 /* # Arduino digital pins connected to shift registers #
  *
@@ -32,6 +33,46 @@ public:
   DMFControlBoard &board_;
 
   Node(DMFControlBoard &board) : board_(board) {}
+
+  UInt8Array description_string(uint8_t key) {
+    UInt8Array result;
+
+    switch (key) {
+      case DescriptionStrings_NAME:
+        result.length = strlen(board_.name());
+        result.data = (uint8_t *)(board_.name());
+        break;
+      case DescriptionStrings_HARDWARE_VERSION:
+        result.length = strlen(board_.hardware_version());
+        result.data = (uint8_t *)(board_.hardware_version());
+        break;
+      case DescriptionStrings_URL:
+        result.length = strlen(board_.url());
+        result.data = (uint8_t *)(board_.url());
+        break;
+      case DescriptionStrings_SOFTWARE_VERSION:
+        result.length = strlen(board_.software_version());
+        result.data = (uint8_t *)(board_.software_version());
+        break;
+      case DescriptionStrings_PROTOCOL_NAME:
+        result.length = strlen(board_.protocol_name());
+        result.data = (uint8_t *)(board_.protocol_name());
+        break;
+      case DescriptionStrings_PROTOCOL_VERSION:
+        result.length = strlen(board_.protocol_version());
+        result.data = (uint8_t *)(board_.protocol_version());
+        break;
+      case DescriptionStrings_MANUFACTURER:
+        result.length = strlen(board_.manufacturer());
+        result.data = (uint8_t *)(board_.manufacturer());
+        break;
+      default:
+        result.data[0] = '\0';
+        result.length = 0;
+        break;
+    }
+    return result;
+  }
 
   uint32_t total_ram_size() { return ram_size(); }
   uint32_t ram_free() { return free_memory(); }
