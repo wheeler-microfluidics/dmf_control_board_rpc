@@ -89,7 +89,7 @@ void DMFControlBoard::measure(PeakToPeakMeasurement &measurement) {
 
 
 void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
-                                               &hv_measurement) {
+                                            &hv_measurement) {
   /* Adjust amplifier gain (only if the hv resistor is the same as on the
    * previous reading; otherwise it may not have had enough time to get a good
    * reading). */
@@ -104,8 +104,7 @@ void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
 
     measured_voltage = (hv_pk_pk * 5.0 / 1023.0  // measured Vrms /
                         / sqrt(2) / 2) /
-                        (1 / sqrt(pow(10e6 / R,   // transfer
-                                      2) +        // function
+                        (1 / sqrt(pow(10e6 / R, 2) +  // transfer function
                                   pow(10e6 * C * 2 * M_PI *
                                       waveform_frequency_, 2)));
     set_voltage = waveform_voltage_;
@@ -116,32 +115,14 @@ void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
       amplifier_gain_ *= measured_voltage / set_voltage;
 
       /* Enforce minimum gain of 1 because if gain goes to zero, it cannot
-        * be adjusted further. */
+       * be adjusted further. */
       if (amplifier_gain_ < 1) {
         amplifier_gain_ = 1;
       }
-      float target;
-      float error = 1e6;
 
       /* Update output voltage (accounting for amplifier gain and for the
        * voltage drop across the feedback resistor). */
-      target = waveform_voltage_;
-      /* Subtract small value to work-around Protocol Buffer serialization issue.
-       *
-       * The symptom of the serialization issue presents as certain floating
-       * point values being incorrectly encoded as near-zero.  Subtracting a
-       * small fraction seems to correct the issue in the general case.
-       *
-       * TODO: Remove subtraction of small amount once Protocol Buffer
-       * serialization has been fixed. */
-      while (error > config_settings_.voltage_tolerance) {
-        error = abs(set_waveform_voltage(target) - target);
-        target -= 0.001;
-
-        /* There is a new request available on the serial port.  Stop what we're
-         * doing so we can service the new request. */
-        if (Serial.available() > 0) { break; }
-      }
+      set_waveform_voltage(waveform_voltage_)
     }
   }
 }
@@ -304,8 +285,6 @@ void DMFControlBoard::begin() {
     delay(500);
   #endif
 
-  i2c_scan();
-
   #if ___HARDWARE_MAJOR_VERSION___ == 1
     // set waveform (SINE=0, SQUARE=1)
     digitalWrite(WAVEFORM_SELECT_, SINE);
@@ -321,6 +300,31 @@ void DMFControlBoard::begin() {
   number_of_channels_ = 0;
 
   uint8_t data[2];
+
+  /* ## Set all digital pots ## */
+
+  /*  - Versions > 1.2 use the built in 5V `AREF`. */
+  #if ___HARDWARE_MAJOR_VERSION___ == 1 && ___HARDWARE_MINOR_VERSION___ < 3
+    set_pot(POT_INDEX_AREF_, config_settings_.aref);
+  #endif
+  #if ___HARDWARE_MAJOR_VERSION___ == 1
+    set_pot(POT_INDEX_VGND_, config_settings_.vgnd);
+    set_pot(POT_INDEX_WAVEOUT_GAIN_1_, config_settings_.waveout_gain_1);
+    set_pot(POT_INDEX_WAVEOUT_GAIN_2_, 0);
+  #endif
+
+  /* ## Select smallest series resistor for both analog input circuits ## */
+  /* TODO: Should we be selecting the _largest_ resistor here instead? */
+  set_series_resistor(0, 0);
+  set_series_resistor(1, 0);
+#ifdef AVR // only on Arduino Mega 2560
+  set_adc_prescaler(4);
+#endif
+}
+
+#if 0
+void DMFControlBoard::init_switching_boards() {
+  i2c_scan();
 
   /* ## Initialize switching boards ## */
   for (uint8_t chip = 0; chip < 8; chip++) {
@@ -366,27 +370,8 @@ void DMFControlBoard::begin() {
       }
     }
   }
-
-  /* ## Set all digital pots ## */
-
-  /*  - Versions > 1.2 use the built in 5V `AREF`. */
-  #if ___HARDWARE_MAJOR_VERSION___ == 1 && ___HARDWARE_MINOR_VERSION___ < 3
-    set_pot(POT_INDEX_AREF_, config_settings_.aref);
-  #endif
-  #if ___HARDWARE_MAJOR_VERSION___ == 1
-    set_pot(POT_INDEX_VGND_, config_settings_.vgnd);
-    set_pot(POT_INDEX_WAVEOUT_GAIN_1_, config_settings_.waveout_gain_1);
-    set_pot(POT_INDEX_WAVEOUT_GAIN_2_, 0);
-  #endif
-
-  /* ## Select smallest series resistor for both analog input circuits ## */
-  /* TODO: Should we be selecting the _largest_ resistor here instead? */
-  set_series_resistor(0, 0);
-  set_series_resistor(1, 0);
-#ifdef AVR // only on Arduino Mega 2560
-  set_adc_prescaler(4);
-#endif
 }
+#endif
 
 const char* DMFControlBoard::hardware_version() {
   return ___HARDWARE_VERSION___;
@@ -718,6 +703,9 @@ float DMFControlBoard::waveform_voltage() {
 
   uint8_t data[10];
 
+  memset(&message, 0, ((sizeof(message.request) > sizeof(message.response))
+                       ? sizeof(message.request) : sizeof(message.response)));
+
   int8_t return_code;
 
   /* Send request to signal-generator board to set waveform frequency. */
@@ -884,4 +872,14 @@ void /* DEVICE */ DMFControlBoard::persistent_write(uint16_t address,
   /* Reload config from persistent storage _(e.g., EEPROM)_ to refresh
    * `ConfigSettings` struct with new value. */
   load_config();
+}
+
+
+void DMFControlBoard::set_signal_generator_board_i2c_address(uint8_t address) {
+  config_settings_.signal_generator_board_i2c_address = address;
+}
+
+
+uint8_t DMFControlBoard::signal_generator_board_i2c_address() {
+  return config_settings_.signal_generator_board_i2c_address;
 }

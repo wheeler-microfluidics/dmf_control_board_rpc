@@ -31,8 +31,26 @@ extern void i2c_request_event();
 class Node {
 public:
   DMFControlBoard &board_;
+  uint8_t buffer[120];
+  static const uint8_t MIN_I2C_ADDRESS = 0x05;
+  static const uint8_t MAX_I2C_ADDRESS = 0x7F;
 
   Node(DMFControlBoard &board) : board_(board) {}
+
+  UInt8Array i2c_scan() {
+    UInt8Array result;
+    result.data = &buffer[0];
+    result.length = 0;
+
+    for (uint8_t i = MIN_I2C_ADDRESS; i <= MAX_I2C_ADDRESS; i++) {
+      Wire.beginTransmission(i);
+      if (Wire.endTransmission() == 0) {
+        result.data[result.length++] = i;
+        delay(1);  // maybe unneeded?
+      }
+    }
+    return result;
+  }
 
   UInt8Array description_string(uint8_t key) {
     UInt8Array result;
@@ -84,6 +102,10 @@ public:
 
   uint32_t high_voltage_samples_address() {
     return (uint32_t)(&board_.high_voltage_samples[0]);
+  }
+
+  uint16_t max_sample_count() const {
+    return DMFControlBoard::MAX_SAMPLE_COUNT;
   }
 
   uint16_t most_recent_sample_count() const {
@@ -177,6 +199,15 @@ public:
   }
 
   float signal_waveform_frequency() { return board_.waveform_frequency(); }
+
+  uint8_t signal_generator_board_i2c_address() {
+    return board_.signal_generator_board_i2c_address();
+  }
+
+  void set_signal_generator_board_i2c_address(uint8_t address) {
+    board_.set_signal_generator_board_i2c_address(address);
+    board_.save_config();
+  }
 
   float set_signal_waveform_frequency(float frequency) {
     return board_.set_waveform_frequency(frequency);

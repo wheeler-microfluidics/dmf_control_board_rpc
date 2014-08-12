@@ -29,6 +29,7 @@ along with dmf_control_board.  If not, see <http://www.gnu.org/licenses/>.
   #include <OneWire.h>
   #ifdef AVR
     #include <EEPROM.h>
+    #include <avr/eeprom.h>
   #elif defined(__SAM3X8E__)
     #include <DueFlashStorage.h>
     extern DueFlashStorage EEPROM;
@@ -145,6 +146,15 @@ uint8_t /* HOST */ RemoteObject::persistent_read(uint16_t address) {
 
 void /* HOST */ RemoteObject::persistent_write(uint16_t address,
                                                uint8_t value) {
-    EEPROM.write(address, value);
+    /* Use [`eeprom_update_byte`][1] instead of [`EEPROM.write`][2] _(which
+     * uses [`eeprom_write_byte`][1])_ to avoid unnecessary write when byte has
+     * not changed.
+     *
+     * __NB__ This likely slightly affects EEPROM write performance since a
+     * read needs to be performed, followed by a write.
+     *
+     * [1]: http://www.nongnu.org/avr-libc/user-manual/group__avr__eeprom.html
+     * [2]: http://arduino.cc/en/Reference/EEPROM */
+    eeprom_update_byte((uint8_t *)address, value);
 }
 #endif

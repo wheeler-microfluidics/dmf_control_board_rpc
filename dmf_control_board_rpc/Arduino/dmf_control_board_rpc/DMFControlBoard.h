@@ -282,6 +282,8 @@ public:
   void update_all_channels();
   void send_spi(uint8_t pin, uint8_t address, uint8_t data);
   uint8_t set_pot(uint8_t index, uint8_t value);
+  uint8_t signal_generator_board_i2c_address();
+  void set_signal_generator_board_i2c_address(uint8_t address);
   uint8_t set_series_resistor(const uint8_t channel,
                               const uint8_t index);
   void load_config(bool use_defaults=false);
