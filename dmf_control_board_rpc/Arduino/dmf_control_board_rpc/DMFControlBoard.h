@@ -24,6 +24,7 @@ along with dmf_control_board.  If not, see <http://www.gnu.org/licenses/>.
 #include "Wire.h"
 #include "Config.h"
 #include "RemoteObject.h"
+#include "FeedbackController.h"
 
 #if (___HARDWARE_MAJOR_VERSION___ == 1 && ___HARDWARE_MINOR_VERSION___ > 1) ||\
         ___HARDWARE_MAJOR_VERSION___ == 2
@@ -31,68 +32,14 @@ along with dmf_control_board.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 
 
-struct PeakToPeakMeasurement {
-  uint8_t analog_pin_index_;
-  int8_t resistor_index_;
-  float reading_sum_;
-  uint16_t reading_count_;
-  uint16_t max_reading_;
-  uint16_t min_reading_;
-  bool saturated_;
-  static const uint16_t SATURATION_THRESHOLD_READING = 820;
-
-  PeakToPeakMeasurement(uint8_t analog_pin_index, int8_t resistor_index)
-    : analog_pin_index_(analog_pin_index), resistor_index_(resistor_index),
-      saturated_(false) {
-    reset_extrema();
-  }
-
-  void reset_extrema() {
-    min_reading_ = 1023;
-    max_reading_ = 0;
-    reading_count_ = 0;
-    reading_sum_ = 0;
-  }
-
-  bool valid() const {
-    return !(max_reading_ == 0 || (min_reading_ == 1023 && !saturated_));
-  }
-
-  uint16_t peak_to_peak() const { return max_reading_ - min_reading_; }
-
-  uint16_t mean() const { return reading_sum_ / reading_count_; }
-
-  bool update(uint16_t reading) {
-    /* Return `true` if series resistor needs to be updated. */
-
-    if (reading > SATURATION_THRESHOLD_READING) {
-      /* The ADC is saturated, so use a smaller resistor and reset the peak. */
-      if (resistor_index_ > 0) {
-        reset_extrema();
-        resistor_index_--;
-        return true;
-      } else {
-        /* The ADC is still saturated using the lowest available resistor
-         * value.  Mark measurement as saturated. */
-        saturated_ = true;
-        resistor_index_ = -1;
-      }
-    } else {
-      /* Update local stats based on reading. */
-      max_reading_ = (reading > max_reading_) ? reading : max_reading_;
-      min_reading_ = (reading < min_reading_) ? reading : min_reading_;
-      reading_sum_ += reading;
-      reading_count_++;
-    }
-    return false;
-  }
-};
-
-
 class DMFControlBoard : public RemoteObject {
 public:
   static const uint8_t SINE = 0;
   static const uint8_t SQUARE = 1;
+  static const uint16_t MAX_SAMPLE_COUNT = 450;
+  uint16_t feedback_count_;
+
+  FeedbackReading feedback_readings_[MAX_SAMPLE_COUNT];
 
   /**\brief Address of config settings in persistent storage _(i.e., EEPROM)_.
    */
@@ -134,6 +81,51 @@ public:
   };
 
   struct ConfigSettings {
+    uint8_t n_series_resistors(uint8_t channel) {
+      switch(channel) {
+        case 0:
+          return sizeof(A0_series_resistance)/sizeof(float);
+          break;
+        case 1:
+          return sizeof(A1_series_resistance)/sizeof(float);
+          break;
+        // we should never get here
+        default:
+          return 0;
+          break;
+      }
+    }
+
+    float series_resistance(uint8_t channel, uint8_t index) {
+      switch(channel) {
+        case 0:
+          return A0_series_resistance[index];
+          break;
+        case 1:
+          return A1_series_resistance[index];
+          break;
+        // we should never get here
+        default:
+          return 0;
+          break;
+      }
+    }
+
+    float series_capacitance(uint8_t channel, uint8_t index) {
+      switch(channel) {
+        case 0:
+          return A0_series_capacitance[index];
+          break;
+        case 1:
+          return A1_series_capacitance[index];
+          break;
+        // we should never get here
+        default:
+          return 0;
+          break;
+      }
+    }
+
     /**\brief This is the software version that the persistent configuration
      * data was written with.*/
     version_t version;
@@ -153,8 +145,8 @@ public:
       POT_WAVEOUT_GAIN_2 is set to 255.*/
       uint8_t waveout_gain_1;
 
-      /**\brief This byte sets the value of the virtual ground reference (between
-      0 and 5V).*/
+      /**\brief This byte sets the value of the virtual ground reference
+      (between 0 and 5V).*/
       uint8_t vgnd;
 
       /**\brief Series resistor values for channel 0.*/
@@ -184,22 +176,7 @@ public:
 
     /**\brief voltage tolerance for amplifier gain adjustment.*/
     float voltage_tolerance;
-
-    uint8_t A0_series_resistor_count() const {
-      return sizeof(A0_series_resistance) / sizeof(float);
-    }
-    uint8_t A1_series_resistor_count() const {
-      return sizeof(A1_series_resistance) / sizeof(float);
-    }
   };
-
-  static const uint16_t MAX_SAMPLE_COUNT = 450;
-
-  uint16_t most_recent_sample_count_;
-  int16_t high_voltage_samples[MAX_SAMPLE_COUNT];
-  int8_t high_voltage_resistor_indexes[MAX_SAMPLE_COUNT];
-  int16_t feedback_voltage_samples[MAX_SAMPLE_COUNT];
-  int8_t feedback_voltage_resistor_indexes[MAX_SAMPLE_COUNT];
 
   // TODO:
   //  Eventually, all of these variables should defined only on the arduino.
@@ -221,8 +198,6 @@ public:
 
   void begin();
 
-  void measure(PeakToPeakMeasurement &measurement);
-  void update_amplifier_gain(PeakToPeakMeasurement &hv_measurement);
   // local accessors
   const char* protocol_name() { return PROTOCOL_NAME_; }
   const char* protocol_version() { return PROTOCOL_VERSION_; }
@@ -306,24 +281,7 @@ public:
     return RETURN_BAD_VALUE_S;
   }
 #endif  //#if ___HARDWARE_MAJOR_VERSION___ == 1
-  uint16_t measure_impedance(uint16_t sampling_time_ms, uint16_t n_samples,
-                             uint16_t delay_between_samples_ms);
   uint8_t set_adc_prescaler(const uint8_t index);
-  float series_resistance(uint8_t channel) {
-    switch(channel) {
-      case 0:
-        return config_settings_.A0_series_resistance
-          [A0_series_resistor_index_];
-        break;
-      case 1:
-        return config_settings_.A1_series_resistance
-          [A1_series_resistor_index_];
-        break;
-      default:
-        break;
-    }
-    return RETURN_BAD_VALUE_S;
-  }
 
   int8_t set_series_resistance(uint8_t channel, float value) {
     switch(channel) {
@@ -343,6 +301,14 @@ public:
         break;
     }
     return RETURN_BAD_INDEX;
+  }
+
+  void reset_feedback_count() { feedback_count_ = 0; }
+
+  void on_feedback_measure(FeedbackReading reading) {
+    if (feedback_count_ < MAX_SAMPLE_COUNT) {
+      feedback_readings_[feedback_count_++] = reading;
+    }
   }
 
   float series_capacitance(uint8_t channel) {
@@ -395,6 +361,8 @@ public:
   bool auto_adjust_amplifier_gain() const {
     return config_settings_.amplifier_gain <= 0;
   }
+
+  float amplifier_gain() const { return amplifier_gain_; }
 
   void set_auto_adjust_amplifier_gain(bool value) {
     if (value) {

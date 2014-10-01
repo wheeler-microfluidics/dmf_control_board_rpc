@@ -61,198 +61,14 @@ const char DMFControlBoard::SOFTWARE_VERSION_[] = ___SOFTWARE_VERSION___;
 const char DMFControlBoard::URL_[] =
     "http://microfluidics.utoronto.ca/dmf_control_board";
 
-DMFControlBoard::DMFControlBoard()
-  : RemoteObject(), most_recent_sample_count_(0) {
-  /* Initialize sample values to allow for testing the following methods:
-   *
-   *  - `Node::read_sample_voltage`
-   *  - `Node::read_sample_resistor_index` */
-  for (int i = 0; i < MAX_SAMPLE_COUNT; i++) {
-    high_voltage_samples[i] = i * 10;
-    high_voltage_resistor_indexes[i] = i;
-    feedback_voltage_samples[i] = (i + 1) * 10;
-    feedback_voltage_resistor_indexes[i] = (i + 1);
-  }
-}
+DMFControlBoard::DMFControlBoard() : RemoteObject(){}
 
 DMFControlBoard::~DMFControlBoard() {}
-
-void DMFControlBoard::measure(PeakToPeakMeasurement &measurement) {
-  uint16_t voltage_reading = analogRead(measurement.analog_pin_index_);
-
-  if (measurement.update(voltage_reading)) {
-    /* We need to update the series resistor. */
-    set_series_resistor(measurement.analog_pin_index_,
-                        measurement.resistor_index_);
-  }
-}
-
-
-void DMFControlBoard::update_amplifier_gain(PeakToPeakMeasurement
-                                            &hv_measurement) {
-  /* Adjust amplifier gain (only if the hv resistor is the same as on the
-   * previous reading; otherwise it may not have had enough time to get a good
-   * reading). */
-  if (auto_adjust_amplifier_gain_ && waveform_voltage_ > 0
-      && hv_measurement.resistor_index_ == A0_series_resistor_index_) {
-    float R = (config_settings_.A0_series_resistance
-                [hv_measurement.resistor_index_]);
-    float C = (config_settings_.A0_series_capacitance
-                [hv_measurement.resistor_index_]);
-    float measured_voltage, set_voltage;
-    int16_t hv_pk_pk = hv_measurement.peak_to_peak();
-
-    measured_voltage = (hv_pk_pk * 5.0 / 1023.0  // measured Vrms /
-                        / sqrt(2) / 2) /
-                        (1 / sqrt(pow(10e6 / R, 2) +  // transfer function
-                                  pow(10e6 * C * 2 * M_PI *
-                                      waveform_frequency_, 2)));
-    set_voltage = waveform_voltage_;
-
-    // If we're outside of the voltage tolerance, update the gain.
-    if (abs(measured_voltage - set_voltage) >
-        config_settings_.voltage_tolerance) {
-      amplifier_gain_ *= measured_voltage / set_voltage;
-
-      /* Enforce minimum gain of 1 because if gain goes to zero, it cannot
-       * be adjusted further. */
-      if (amplifier_gain_ < 1) {
-        amplifier_gain_ = 1;
-      }
-
-      /* Update output voltage (accounting for amplifier gain and for the
-       * voltage drop across the feedback resistor). */
-      set_waveform_voltage(waveform_voltage_)
-    }
-  }
-}
-
-
-uint16_t DMFControlBoard::measure_impedance(uint16_t sampling_time_ms,
-                                            uint16_t n_samples,
-                                            uint16_t
-                                            delay_between_samples_ms) {
-  /* # `measure_impedance` #
-   *
-   * ## Pins ##
-   *
-   *  - Analog pin `0` is connected to _high-voltage (HV)_ signal.
-   *  - Analog pin `1` is connected to _feed-back (FB)_ signal.
-   *
-   * ## Analog input measurement circuit ##
-   *
-   *
-   *                     $R_fixed$
-   *     $V_in$   |-------/\/\/\------------\--------\--------\--------\
-   *                                        |        |        |        |
-   *                                        /        /        /        /
-   *                              $R_min$   \  $R_1$ \  $R_2$ \  $R_3$ \
-   *                                        /        /        /        /
-   *                                        \        \        \        \
-   *                                        |        |        |        |
-   *                                        o        o        o        o
-   *                                       /        /        /        /
-   *                                      /        /        /        /
-   *                                        o        o        o        o
-   *                                        |        |        |        |
-   *                                        |        |        |        |
-   *                                       ---      ---      ---      ---
-   *                                        -        -        -        -
-   *
-   * Based on the amplitude of $V_in$, we need to select an appropriate
-   * resistor to activate, such that we divide the input voltage to within
-   * 0-5V, since this is the range that Arduino ADC can handle.
-   */
-
-  /* Only collect enough samples to fill the maximum payload length.
-   *
-   * Each sample contains:
-   *
-   *  - High-voltage (`A0`) amplitude.
-   *  - High-voltage (`A0`) resistor index.
-   *  - Feed-back (`A1`) amplitude.
-   *  - Feed-back (`A1`) resistor index.
-   * */
-  if (n_samples > MAX_SAMPLE_COUNT) { n_samples = MAX_SAMPLE_COUNT; }
-
-  /* Save current resistor indexes to return them to their original state when
-   * we're done. */
-  uint8_t original_A0_index = A0_series_resistor_index_;
-  uint8_t original_A1_index = A1_series_resistor_index_;
-
-  /* Set the resistors to their highest values */
-  set_series_resistor(0, config_settings_.A0_series_resistor_count() - 1);
-  set_series_resistor(1, config_settings_.A1_series_resistor_count() - 1);
-
-  /* Sample the following voltage signals:
-   *
-   *  - Incoming high-voltage signal from the amplifier.
-   *  - Incoming feed-back signal from the DMF device.
-   *
-   * For each signal, take `n` samples to find the corresponding peak-to-peak
-   * voltage.  While sampling, automatically select the largest feed-back
-   * resistor that _does not saturate_ the input _analog-to-digital converter
-   * (ADC)_.  This provides the highest resolution measurements.
-   *
-   * __NB__ In the case where the signal saturates the lowest resistor, mark
-   * the measurement as saturated/invalid. */
-  uint16_t i = 0;
-  most_recent_sample_count_ = 0;
-
-  for (; i < n_samples; i++) {
-    PeakToPeakMeasurement hv_measurement(0, A0_series_resistor_index_);
-    PeakToPeakMeasurement fb_measurement(1, A1_series_resistor_index_);
-    uint32_t t_sample = millis();
-
-    /* Sample for `sampling_time_ms` milliseconds and use the minimum and
-     * maximum values to determine peak-to-peak voltage. */
-    while (millis() - t_sample < sampling_time_ms) {
-      /* If the smallest series resistor becomes saturated, do not perform
-       * measurement. */
-      if (!hv_measurement.saturated_) { measure(hv_measurement); }
-      if (!fb_measurement.saturated_) { measure(fb_measurement); }
-    }
-
-    int16_t hv_pk_pk = hv_measurement.peak_to_peak();
-    int16_t fb_pk_pk = fb_measurement.peak_to_peak();
-
-    /* TODO: Rather than check `i > 0`, should this check that at least one
-     * valid measurement has been made? */
-    if (hv_measurement.valid() && i > 0) {
-      /* Based on the most-recent peak-to-peak measurement of the incoming
-       * high-voltage signal, adjust the gain correction factor we apply to
-       * waveform amplitude changes to compensate for deviations from our model
-       * of the gain of the amplifier. */
-      update_amplifier_gain(hv_measurement);
-    }
-
-    /* Store measurements into result buffers. */
-    high_voltage_samples[i] = hv_pk_pk;
-    high_voltage_resistor_indexes[i] = hv_measurement.resistor_index_;
-    feedback_voltage_samples[i] = fb_pk_pk;
-    feedback_voltage_resistor_indexes[i] = fb_measurement.resistor_index_;
-
-    /* There is a new request available on the serial port.  Stop what we're
-     * doing so we can service the new request. */
-    if (Serial.available() > 0) { break; }
-
-    uint32_t t_delay = millis();
-    while (millis() - t_delay < delay_between_samples_ms) {}
-  }
-  most_recent_sample_count_ = i;
-
-  /* Set the resistors back to their original states. */
-  set_series_resistor(0, original_A0_index);
-  set_series_resistor(1, original_A1_index);
-
-  /* Return the number of samples that we measured _(i.e, the number of values
-   * available in the result buffers)_. */
-  return i;
-}
 
 
 void DMFControlBoard::begin() {
   RemoteObject::begin();
+  reset_feedback_count();
 
   // Versions > 1.2 use the built in 5V AREF (default)
   #if ___HARDWARE_MAJOR_VERSION___ == 1 && ___HARDWARE_MINOR_VERSION___ < 3
@@ -759,9 +575,9 @@ float DMFControlBoard::set_waveform_voltage(float output_vrms) {
       &SignalGeneratorSetWaveformVoltageResponse_fields[0], &data[0],
       sizeof(data));
 
-  waveform_voltage_ = output_vrms;
+  waveform_voltage_ = message.response.result * amplifier_gain_;
 
-  return message.response.result * amplifier_gain_;
+  return waveform_voltage_;
 #endif  // #if ___HARDWARE_MAJOR_VERSION___==1 / #else
 }
 

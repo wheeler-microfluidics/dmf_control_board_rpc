@@ -24,6 +24,7 @@ along with dmf_control_board.  If not, see <http://www.gnu.org/licenses/>.
 #endif
 #if defined(AVR) || defined(__SAM3X8E__)
   #include "Arduino.h"
+  #include "AdvancedADC.h"
   #include <Wire.h>
   #include <SPI.h>
   #include <OneWire.h>
@@ -90,12 +91,13 @@ void /* DEVICE */ RemoteObject::begin() {
     // write the baud_rate to eeprom
     for (uint8_t i = 0; i < 4; i++) {
       persistent_write(PERSISTENT_BAUD_RATE_ADDRESS + i,
-        ((uint8_t*)&baud_rate)[i]);
+                       ((uint8_t*)&baud_rate)[i]);
     }
   }
   Serial.begin(baud_rate);
   Wire.begin();
   SPI.begin();
+  aref_ = AdvancedADC.readVcc();
 }
 
 void /* DEVICE */ RemoteObject::i2c_scan() {

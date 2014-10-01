@@ -3,6 +3,7 @@
 #include "Memory.h"
 #include "OneWire.h"
 #include "EEPROM.h"
+#include "AdvancedADC.h"
 #include "PacketParser.h"
 #include "UnionMessage.h"
 #include "SignalGeneratorBoard_pb.h"
@@ -50,6 +51,7 @@ Reactor reactor(parser, Serial, handler);
 
 void setup() {
   dmf_control_board.begin();
+  node.feedback_controller_.begin(&dmf_control_board);
 #ifndef DISABLE_I2C
 #ifdef __AVR_ATmega2560__
   /* Join I2C bus as slave. */

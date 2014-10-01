@@ -6,6 +6,8 @@
 #include "Memory.h"
 #include "DMFControlBoard.h"
 #include "custom_pb.h"
+#include "AdvancedADC.h"
+#include "FeedbackController.h"
 
 /* # Arduino digital pins connected to shift registers #
  *
@@ -26,11 +28,12 @@ extern void i2c_receive_event(int byte_count);
 extern void i2c_request_event();
 #endif  // #ifndef DISABLE_I2C
 
-#define PACKET_SIZE  (8 + (DMFControlBoard::MAX_SAMPLE_COUNT * sizeof(int16_t)))
+#define PACKET_SIZE  1024
 
 class Node {
 public:
   DMFControlBoard &board_;
+  FeedbackController feedback_controller_;
   uint8_t buffer[120];
   static const uint8_t MIN_I2C_ADDRESS = 0x05;
   static const uint8_t MAX_I2C_ADDRESS = 0x7F;
@@ -100,16 +103,13 @@ public:
    * METHODS
    **************************************************************/
 
+#if 0
   uint32_t high_voltage_samples_address() {
     return (uint32_t)(&board_.high_voltage_samples[0]);
   }
 
   uint16_t max_sample_count() const {
-    return DMFControlBoard::MAX_SAMPLE_COUNT;
-  }
-
-  uint16_t most_recent_sample_count() const {
-    return board_.most_recent_sample_count_;
+    return MAX_SAMPLE_COUNT;
   }
 
   Int16Array high_voltage_samples() {
@@ -139,6 +139,7 @@ public:
     result.length = board_.most_recent_sample_count_;
     return result;
   }
+#endif
 
   void write_uint8(uint32_t address, UInt8Array array) {
     uint8_t *data = (uint8_t *)address;
@@ -156,43 +157,27 @@ public:
     board_.send_spi(pin, address, data);
   }
 
-  int8_t set_series_resistor_index(uint8_t index, uint8_t channel) {
-    return board_.set_series_resistor(channel, index);
+  int8_t set_series_resistor_index(uint8_t channel, uint8_t index) {
+    return feedback_controller_.set_series_resistor_index(channel, index);
   }
 
   int8_t series_resistor_index(uint8_t channel) {
-    switch(channel) {
-      case 0:
-        return board_.A0_series_resistor_index_;
-        break;
-      case 1:
-        return board_.A1_series_resistor_index_;
-        break;
-      default:
-        return -1;
-        break;
-    }
+    return feedback_controller_.series_resistor_index(channel);
   }
 
-  void load_config(bool use_defaults) {
-    board_.load_config(use_defaults);
+  void load_config(bool use_defaults) { board_.load_config(use_defaults); }
+
+  void save_config() { board_.save_config(); }
+
+  void set_adc_prescaler(const uint8_t index) {
+    AdvancedADC.setPrescaler(index);
   }
 
-  void save_config() {
-    board_.save_config();
-  }
-
-  uint8_t set_adc_prescaler(const uint8_t index) {
-    return board_.set_adc_prescaler(index);
-  }
-
-  uint8_t number_of_channels() const {
-    return board_.number_of_channels_;
-  }
-
+#if 0
   float signal_waveform_voltage() const {
     return board_.waveform_voltage();
   }
+#endif
 
   float set_signal_waveform_voltage(float vrms) {
     return board_.set_waveform_voltage(vrms);
@@ -215,14 +200,16 @@ public:
 
 #ifdef AVR // only on Arduino Mega 2560
   float sampling_rate() const {
-    return board_.SAMPLING_RATES_[board_.sampling_rate_index_];
+    return AdvancedADC.samplingRate();
   }
 
-  void set_sampling_rate(uint8_t rate) { set_adc_prescaler(rate); }
+  void set_sampling_rate(float rate) { AdvancedADC.setSamplingRate(rate); }
 #endif
 
   float series_resistance(uint8_t channel) {
-    return board_.series_resistance(channel);
+    return board_.config_settings_.series_resistance(
+        channel,
+        feedback_controller_.series_resistor_index(channel));
   }
 
   int8_t set_series_resistance(uint8_t channel, float value) {
@@ -249,19 +236,49 @@ public:
     board_.set_auto_adjust_amplifier_gain(value);
   }
 
-  uint16_t measure_impedance(uint16_t sampling_time_ms, uint16_t n_samples,
-                             uint16_t delay_between_samples_ms) {
-    return board_.measure_impedance(sampling_time_ms, n_samples,
-                                    delay_between_samples_ms);
+  UInt16Array config_version() {
+    UInt16Array result;
+    result.data = reinterpret_cast<uint16_t *>(&buffer[0]);
+    DMFControlBoard::version_t config_version = board_.config_version();
+    result.data[0] = config_version.major;
+    result.data[1] = config_version.minor;
+    result.data[2] = config_version.micro;
+    result.length = 3;
+    return result;
+  }
+
+  uint16_t measure_impedance(uint16_t n_samples_per_window,
+                             uint16_t n_sampling_windows,
+                             float delay_between_windows_ms,
+                             bool interleave_samples, bool rms) {
+    board_.reset_feedback_count();
+    return feedback_controller_.measure_impedance(n_samples_per_window,
+                                                  n_sampling_windows,
+                                                  delay_between_windows_ms,
+                                                  interleave_samples, rms);
+  }
+
+  UInt8Array feedback_readings(uint16_t offset) {
+    UInt8Array result;
+    if (offset < board_.feedback_count_) {
+      uint16_t packet_samples = (PACKET_SIZE - 8) / sizeof(FeedbackReading);
+      if (board_.feedback_count_ - offset < packet_samples) {
+        packet_samples = board_.feedback_count_ - offset;
+      }
+      result.data = (uint8_t *)&board_.feedback_readings_[offset];
+      result.length = packet_samples * sizeof(FeedbackReading);
+    } else {
+      result.data = NULL;
+      result.length = 0;
+    }
+    return result;
   }
 
   void reset_config_to_defaults() { board_.load_config(true); }
 
 #if (___HARDWARE_MAJOR_VERSION___ == 1 && ___HARDWARE_MINOR_VERSION___ > 1) ||\
         ___HARDWARE_MAJOR_VERSION___ == 2
-  uint8_t power_supply_pin() const {
-    return board_.POWER_SUPPLY_ON_PIN_;
-  }
+  uint8_t power_supply_pin() const { return board_.POWER_SUPPLY_ON_PIN_; }
 #endif
 
   bool watchdog_enabled() const { return board_.watchdog_enabled(); }

@@ -112,6 +112,7 @@ public:
   ~RemoteObject();
 
 #if defined(AVR) || defined(__SAM3X8E__)
+  float aref() { return aref_; }
   virtual void begin();
   void i2c_scan();
 
@@ -131,6 +132,8 @@ public:
   virtual uint8_t persistent_read(uint16_t address);
   virtual void persistent_write(uint16_t address, uint8_t value);
 #endif
+private:
+  float aref_;
 };
 
 #endif  // _REMOTE_OBJECT_H
